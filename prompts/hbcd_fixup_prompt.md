@@ -42,7 +42,21 @@ The description should:
 
 ## Output format
 
-Return a JSON array where each element is the corrected `vlmd_field_draft` object.
-- Include ALL keys from the original `vlmd_field_draft`
-- Only modify properties indicated by the issue codes
-- Do not add or remove keys beyond what's needed to fix the issue
+Return a JSON array where each element follows the wrapper format defined in the system prompt:
+
+```json
+{
+  "field": { ...corrected vlmd_field_draft with ALL original keys preserved... },
+  "justification": "Explain what was changed and why in 1–3 sentences.",
+  "sources": [
+    "name component 'anthro' → anthropometric",
+    "source_row.table_label = 'Anthropometrics'",
+    "source_row.domain = 'Physical Health'",
+    "HBCD prefix 'ph_ch_' = physical health / child"
+  ]
+}
+```
+
+- Only modify `field` properties indicated by the issue codes
+- `sources` must list the specific evidence used — name parts, source_row values, domain knowledge
+- Do not add VLMD schema keys beyond what's needed to fix the issue

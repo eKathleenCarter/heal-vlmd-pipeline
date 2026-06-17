@@ -1,7 +1,6 @@
-"""Shared LLM client for HBCD→VLMD pipeline.
+"""Shared LLM client for VLMD conversion pipeline.
 
 Supports Azure AI Foundry (primary for HEAL) and Anthropic (alternative).
-Pattern adapted from /Users/ekcarter/Desktop/UDN/pipeline/phase1/extract_concepts_llm.py
 """
 import json
 import os
@@ -12,20 +11,10 @@ from openai import AzureOpenAI
 load_dotenv()
 
 MODELS = {
-    # Azure AI Foundry (primary for HEAL)
+    # ── Azure AI Foundry ─────────────────────────────────────────────────────
     "azure-gpt-4.1-mini": {
         "provider": "azure",
         "model_id": "gpt-4.1-mini",
-        "supports_temperature": True,
-    },
-    "azure-gpt-4o-mini": {
-        "provider": "azure",
-        "model_id": "gpt-4o-mini",
-        "supports_temperature": True,
-    },
-    "azure-deepseek-v4-flash": {
-        "provider": "azure",
-        "model_id": "DeepSeek-V4-Flash",
         "supports_temperature": True,
     },
     "azure-gpt-5.4-mini": {
@@ -34,14 +23,30 @@ MODELS = {
         "supports_temperature": False,
         "use_max_completion_tokens": True,
     },
-    "azure-o3-low": {
+    "azure-gpt-5.4": {
         "provider": "azure",
-        "model_id": "o3",
+        "model_id": "gpt-5.4",
         "supports_temperature": False,
-        "reasoning_effort": "low",
         "use_max_completion_tokens": True,
     },
-    # Anthropic (alternative)
+    "azure-gpt-5.5": {
+        "provider": "azure",
+        "model_id": "gpt-5.5",
+        "supports_temperature": False,
+        "use_max_completion_tokens": True,
+    },
+    "azure-gpt-chat-latest": {
+        "provider": "azure",
+        "model_id": "gpt-chat-latest",
+        "supports_temperature": False,
+        "use_max_completion_tokens": True,
+    },
+    "azure-deepseek-v4-pro": {
+        "provider": "azure",
+        "model_id": "DeepSeek-V4-Pro",
+        "supports_temperature": True,
+    },
+    # ── Anthropic ────────────────────────────────────────────────────────────
     "claude-haiku": {
         "provider": "anthropic",
         "model_id": "claude-haiku-4-5-20251001",

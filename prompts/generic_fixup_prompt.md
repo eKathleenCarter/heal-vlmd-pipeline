@@ -24,5 +24,6 @@ Descriptions should:
 
 ## Output format
 Return a JSON array of the same length as the input.
-Each element must be the corrected `vlmd_field_draft` with all existing keys preserved.
-Only modify properties indicated by the issue codes.
+Each element must follow the wrapper format defined in the system prompt:
+`{"field": {...corrected vlmd_field_draft...}, "justification": "...", "sources": [...]}`.
+Preserve all existing keys in `field`. Only modify properties indicated by the issue codes.

@@ -74,11 +74,21 @@ def process_chunk(system: str, base_prompt: str, chunk: list,
 
     if not isinstance(parsed, list):
         raise ValueError(f"Expected JSON array, got {type(parsed).__name__}")
-    return parsed
+
+    # Unwrap {field, justification, sources} wrapper if present
+    unwrapped = []
+    for item in parsed:
+        if isinstance(item, dict) and "field" in item:
+            unwrapped.append(item)
+        else:
+            # LLM returned bare field (fallback for older prompt versions)
+            unwrapped.append({"field": item, "justification": "", "sources": []})
+    return unwrapped
 
 
 def fixup(lint_path: str, output_path: str, checkpoint_path: str,
-          format_yaml: str | None, model_key: str) -> int:
+          format_yaml: str | None, model_key: str,
+          cleanup_log_path: str | None = None) -> int:
     lint_records = json.loads(Path(lint_path).read_text(encoding="utf-8"))
     if not lint_records:
         print("No lint records to fix.", flush=True)
@@ -99,6 +109,8 @@ def fixup(lint_path: str, output_path: str, checkpoint_path: str,
     ]
 
     print(f"Fixing {len(items_for_llm)} flagged fields with model {model_key!r} ...", flush=True)
+    for item in items_for_llm:
+        print(f"  [{item['name']}]  will fix: {', '.join(item['issues'])}", flush=True)
     system, base_prompt = load_prompts_from_spec(format_yaml)
 
     # Load checkpoint
@@ -113,33 +125,77 @@ def fixup(lint_path: str, output_path: str, checkpoint_path: str,
     chunks = [items_for_llm[i: i + MAX_ROWS_PER_CHUNK]
                for i in range(0, len(items_for_llm), MAX_ROWS_PER_CHUNK)]
 
-    all_fixed = []
+    # all_wrapped: list of {field, justification, sources} dicts
+    all_wrapped = []
     for i, chunk in enumerate(chunks):
         chunk_key = str(i)
         if chunk_key in checkpoint:
             print(f"  Chunk {i + 1}/{len(chunks)}: skipped (checkpoint)", flush=True)
-            all_fixed.extend(checkpoint[chunk_key])
+            all_wrapped.extend(checkpoint[chunk_key])
             continue
 
         print(f"  Chunk {i + 1}/{len(chunks)}: {len(chunk)} records ...", end=" ", flush=True)
         t0 = time.time()
         try:
-            fixed = process_chunk(system, base_prompt, chunk, model_key)
+            wrapped = process_chunk(system, base_prompt, chunk, model_key)
         except Exception as e:
             print(f"\nERROR in chunk {i}: {e}", file=sys.stderr)
             return 1
         print(f"done ({time.time() - t0:.1f}s)", flush=True)
 
-        checkpoint[chunk_key] = fixed
+        checkpoint[chunk_key] = wrapped
         Path(checkpoint_path).write_text(
             json.dumps(checkpoint, indent=2, ensure_ascii=False), encoding="utf-8"
         )
-        all_fixed.extend(fixed)
+        all_wrapped.extend(wrapped)
 
+    # Print per-field LLM decisions
+    print(flush=True)
+    for item in all_wrapped:
+        name = item["field"].get("name", "?")
+        justification = item.get("justification", "")
+        sources = item.get("sources", [])
+        print(f"  [{name}]", flush=True)
+        if justification:
+            print(f"    Justification: {justification}", flush=True)
+        if sources:
+            for s in sources:
+                print(f"    Source: {s}", flush=True)
+
+    # Extract bare VLMD fields for the merge step
+    all_fixed = [item["field"] for item in all_wrapped]
     Path(output_path).write_text(
         json.dumps(all_fixed, indent=2, ensure_ascii=False), encoding="utf-8"
     )
     print(f"  Fixed fields → {output_path}", flush=True)
+
+    # Write cleanup log: issues, before/after diff, LLM justification and sources
+    if cleanup_log_path:
+        by_name = {r["name"]: r for r in lint_records}
+        cleanup_log = []
+        for item in all_wrapped:
+            fixed_field = item["field"]
+            name = fixed_field.get("name")
+            original = by_name.get(name, {})
+            before = original.get("vlmd_field_draft", {})
+            cleanup_log.append({
+                "name": name,
+                "model": model_key,
+                "issues": original.get("issues", []),
+                "justification": item.get("justification", ""),
+                "sources": item.get("sources", []),
+                "before": before,
+                "after": fixed_field,
+                "changed_keys": [
+                    k for k in fixed_field
+                    if fixed_field.get(k) != before.get(k)
+                ],
+            })
+        Path(cleanup_log_path).write_text(
+            json.dumps(cleanup_log, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+        print(f"  LLM cleanup log → {cleanup_log_path}", flush=True)
+
     return 0
 
 

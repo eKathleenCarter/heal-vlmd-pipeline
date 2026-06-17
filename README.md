@@ -171,19 +171,24 @@ python run_pipeline.py \
   --study-label HBCD_DataDictionary
 ```
 
-Providing `--hdp-id` is enough to get started. The pipeline fetches APPL_ID, study title, PI, and institution from the HEAL platform, displays a confirmation card, and waits for your approval before proceeding. Output goes to `output/`.
+Providing `--hdp-id` is enough to get started. The pipeline fetches APPL_ID, study title, PI, and institution from the HEAL platform, displays a confirmation card, and waits for your approval before proceeding.
 
-To also copy the validated output to a destination repository:
-
-```bash
-python run_pipeline.py \
-  --input  "/path/to/data_dictionary.csv" \
-  --hdp-id HDP01258 \
-  --study-label HBCD_DataDictionary \
-  --dest-dir /path/to/CleanedDataDictionaries
+Output is written to a nested directory matching the `heal-data-dictionaries` repo convention:
 ```
-
-Files are copied to `{dest-dir}/{appl_id}/{hdp_id}/vlmd/` only after passing final schema validation.
+output/HDP01258/
+  input/HBCD_datadictionary.csv       ← copy of the original input
+  vlmd/HDP01258_HBCD_datadictionary/
+    HDP01258_HBCD_datadictionary.vlmd.json
+    HDP01258_HBCD_datadictionary.vlmd.csv
+    metadata.yaml
+work/HDP01258/
+  vlmd_converted.json
+  vlmd_lint_report.json               ← converter flags (fields needing LLM attention)
+  vlmd_validation_report.json         ← schema validation results
+  vlmd_llm_cleanup.json               ← per-field LLM reasoning log (what changed and why)
+  vlmd_llm_fixes.json
+  vlmd_llm_fixes.checkpoint.json
+```
 
 **Flags:**
 
@@ -193,13 +198,13 @@ Files are copied to `{dest-dir}/{appl_id}/{hdp_id}/vlmd/` only after passing fin
 | `--hdp-id ID` | _(empty)_ | HEAL Data Platform project ID — triggers platform lookup |
 | `--appl-id ID` | auto-fetched | Override the APPL_ID if the platform lookup is wrong |
 | `--title TEXT` | auto-fetched | Override the study title |
-| `--study-label TEXT` | `DataDictionary` | Short label for output filename: `{appl_id}_{label}.vlmd.json` |
+| `--name TEXT` | derived from input filename | Output file stem prefix. Final name: `{hdp-id}_{name}`. Example: `--name HBCD_datadictionary` → `HDP01258_HBCD_datadictionary.vlmd.json` |
 | `--format YAML` | auto-detect | Skip format detection, use this format YAML |
 | `--model KEY` | `azure-gpt-4.1-mini` | LLM model key (see Models section) |
-| `--output-dir DIR` | `output/` | Where to write final VLMD files |
-| `--dest-dir DIR` | _(none)_ | Root of destination repository; files copied there after validation |
+| `--output-dir DIR` | `output/{hdp-id}/` | Base output directory |
+| `--dest-dir DIR` | _(none)_ | Root of destination repository; files copied to `{dest-dir}/{hdp-id}/vlmd/{stem}/` and `{dest-dir}/{hdp-id}/input/` after validation |
 | `--yes` / `-y` | off | Skip study confirmation prompt (for scripted/bot use) |
-| `--skip-llm` | off | Skip LLM fixup even if validation fails |
+| `--skip-llm` | off | Skip LLM fixup even if validation or converter flags errors |
 | `--no-detect` | off | Skip format detection (requires `--format`) |
 
 **Examples:**
@@ -209,7 +214,7 @@ Files are copied to `{dest-dir}/{appl_id}/{hdp_id}/vlmd/` only after passing fin
 python run_pipeline.py \
   --input "/path/to/HBCD_datadictionary.csv" \
   --hdp-id HDP01258 \
-  --study-label HBCD_DataDictionary
+  --name HBCD_datadictionary
 
 # Known format, skip detection
 python run_pipeline.py \
@@ -222,7 +227,8 @@ python run_pipeline.py \
 python run_pipeline.py \
   --input "/path/to/REDCap_DataDictionary.csv" \
   --hdp-id HDP01193 \
-  --dest-dir /path/to/CleanedDataDictionaries
+  --name SCOPE_DataDictionary \
+  --dest-dir /path/to/heal-data-dictionaries/data-dictionaries
 
 # Non-interactive / scripted — skip confirmation
 python run_pipeline.py --input file.csv --hdp-id HDP01258 --yes
@@ -452,14 +458,16 @@ No Python changes required for standard column patterns.
 
 ### Available LLM models
 
-| Key | Provider | Notes |
-|-----|----------|-------|
-| `azure-gpt-4.1-mini` | Azure AI Foundry | Default — fast, cheap |
-| `azure-gpt-4o-mini` | Azure AI Foundry | Alternative |
-| `azure-deepseek-v4-flash` | Azure AI Foundry | |
-| `azure-o3-low` | Azure AI Foundry | Reasoning model |
-| `claude-haiku` | Anthropic | `claude-haiku-4-5-20251001` |
-| `claude-sonnet` | Anthropic | `claude-sonnet-4-6` |
+| Key | Provider | Model ID | Notes |
+|-----|----------|----------|-------|
+| `azure-gpt-4.1-mini` | Azure AI Foundry | `gpt-4.1-mini` | Default — fast, high quota |
+| `azure-gpt-5.4-mini` | Azure AI Foundry | `gpt-5.4-mini` | |
+| `azure-gpt-5.4` | Azure AI Foundry | `gpt-5.4` | |
+| `azure-gpt-5.5` | Azure AI Foundry | `gpt-5.5` | Most capable Azure option |
+| `azure-gpt-chat-latest` | Azure AI Foundry | `gpt-chat-latest` | |
+| `azure-deepseek-v4-pro` | Azure AI Foundry | `DeepSeek-V4-Pro` | |
+| `claude-haiku` | Anthropic | `claude-haiku-4-5-20251001` | |
+| `claude-sonnet` | Anthropic | `claude-sonnet-4-6` | |
 
 Azure AI Foundry is the primary backend for HEAL. Pass `--model <key>` to override.
 

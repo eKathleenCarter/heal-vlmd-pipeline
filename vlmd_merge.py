@@ -68,7 +68,9 @@ def fields_to_csv_rows(fields: list) -> list[dict]:
 
 
 def write_metadata_yaml(output_dir: Path, hdp_id: str, appl_id: str,
-                        stem: str, title: str, format_name: str):
+                        stem: str, title: str, format_name: str,
+                        input_filename: str | None = None):
+    input_file = input_filename or f"{stem}.csv"
     meta = {
         "Project": {
             "HDP_ID": hdp_id,
@@ -78,9 +80,9 @@ def write_metadata_yaml(output_dir: Path, hdp_id: str, appl_id: str,
             "LastModified": date.today().isoformat(),
             "ProjectType": "HEAL Research Programs",
         },
-        f"{stem}.csv": {
+        stem: {
             "inputtype": format_name,
-            "relative_input_filepath": f"../input/{stem}.csv",
+            "relative_input_filepath": f"../../input/{input_file}",
             "relative_output_filepath": f"./{stem}.vlmd.json",
         },
     }
@@ -111,7 +113,9 @@ def validate_output(vlmd_doc: dict) -> bool:
 
 def merge(converted_path: str, fixes_path: str | None, output_dir: str,
           hdp_id: str, appl_id: str, title: str,
-          study_label: str, format_name: str, validate: bool) -> int:
+          study_label: str, format_name: str, validate: bool,
+          file_stem: str | None = None,
+          input_filename: str | None = None) -> int:
     fields = json.loads(Path(converted_path).read_text(encoding="utf-8"))
     print(f"Loaded {len(fields):,} converted fields", flush=True)
 
@@ -134,9 +138,11 @@ def merge(converted_path: str, fixes_path: str | None, output_dir: str,
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
 
-    # Stem: {appl_id}_{study_label}
-    label = study_label.replace(" ", "_") if study_label else "DataDictionary"
-    stem = f"{appl_id}_{label}"
+    if file_stem:
+        stem = file_stem
+    else:
+        label = study_label.replace(" ", "_") if study_label else "DataDictionary"
+        stem = f"{appl_id}_{label}"
 
     # Validate before writing — gate output on schema validity
     validation_passed = True
@@ -158,7 +164,7 @@ def merge(converted_path: str, fixes_path: str | None, output_dir: str,
             writer.writerows(rows)
         print(f"  CSV  → {csv_path}", flush=True)
 
-    write_metadata_yaml(out, hdp_id, appl_id, stem, title, format_name)
+    write_metadata_yaml(out, hdp_id, appl_id, stem, title, format_name, input_filename)
     print(f"\nDone. {len(fields):,} fields written.", flush=True)
 
     if validate and not validation_passed:
