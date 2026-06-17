@@ -1,0 +1,9 @@
+"Variable / Field Name","Form Name","Section Header","Field Type","Field Label","Choices, Calculations, OR Slider Labels","Field Note","Text Validation Type OR Show Slider Number","Text Validation Min","Text Validation Max","Identifier?","Branching Logic (Show field only if...)","Required Field?","Custom Alignment","Question Number (surveys only)","Matrix Group Name","Matrix Ranking?","Field Annotation"
+participant_id,demographics,Identifiers,text,Participant ID,,,,,,"y",,y,,,,,
+consent_date,demographics,,text,Date informed consent was obtained,,,date,2020-01-01,2030-12-31,,,y,,,,,
+age_at_enrollment,demographics,Demographics,text,Age at enrollment (years),,,number,18,99,,,y,,,,,
+sex,demographics,,radio,What is the participant's sex?,"1, Male | 2, Female | 3, Non-binary | 4, Prefer not to answer",,,,,,,"y",,,,,
+race,demographics,,checkbox,Race (select all that apply),"1, White | 2, Black or African American | 3, Asian | 4, American Indian or Alaska Native | 5, Native Hawaiian or Pacific Islander | 6, More than one race | 99, Unknown or not reported",,,,,,,,,,,,
+current_pain_level,pain_assessment,Pain Assessment,slider,Current pain level (0 = no pain; 10 = worst pain imaginable),,,number,0,10,,,,,,,,
+primary_diagnosis,medical_history,,dropdown,Primary diagnosis category,"1, Substance use disorder | 2, Chronic pain | 3, Mental health condition | 4, Other",,,,,,y,,,,,,
+days_since_last_use,substance_use,Substance Use History,text,Days since last substance use,,,number,0,,,"[primary_diagnosis] = '1'",,,,,,

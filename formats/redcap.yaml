@@ -1,0 +1,65 @@
+format_name: redcap
+description: REDCap data dictionary export (standard CSV format)
+
+input_reader: csv
+
+name_column: "Variable / Field Name"
+description_column: "Field Label"
+title_column: null
+
+type_mapping:
+  source_column: "Field Type"
+  lookup:
+    text:        string
+    notes:       string
+    radio:       string
+    checkbox:    string
+    dropdown:    string
+    calc:        number
+    file:        string
+    yesno:       boolean
+    truefalse:   boolean
+    slider:      number
+    descriptive: string
+    date:        date
+    datetime:    datetime
+
+enum_ordered:
+  source_column: "Field Type"
+  trigger_values: []
+
+section:
+  primary_column: "Form Name"
+
+levels:
+  source_column: "Choices, Calculations, OR Slider Labels"
+  format: pipe_separated
+  pair_separator: ","
+  choice_separator: "|"
+
+related_concepts: []
+
+custom_columns:
+  - "Section Header"
+  - "Field Note"
+  - "Text Validation Type OR Show Slider Number"
+  - "Text Validation Min"
+  - "Text Validation Max"
+  - "Identifier?"
+  - "Branching Logic (Show field only if...)"
+  - "Required Field?"
+  - "Custom Alignment"
+  - "Question Number (surveys only)"
+  - "Matrix Group Name"
+  - "Matrix Ranking?"
+
+fixup_prompt: prompts/redcap_fixup_prompt.md
+system_invariants_prompt: prompts/system_invariants_vlmd.md
+
+detection:
+  signature_columns:
+    strong:     ["Variable / Field Name", "Field Type", "Choices, Calculations, OR Slider Labels"]
+    supporting: ["Form Name", "Branching Logic (Show field only if...)", "Field Note",
+                 "Text Validation Type OR Show Slider Number", "Required Field?"]
+  confidence_threshold: 0.6
+  file_extensions: []

@@ -1,0 +1,49 @@
+format_name: stata
+description: Stata .dta file — variable metadata extracted via pyreadstat
+
+input_reader: stata
+
+# After pyreadstat extraction, these are the normalized column names
+name_column: varname
+description_column: varlabel
+
+type_mapping:
+  source_column: vartype
+  lookup:
+    double: number
+    float:  number
+    long:   integer
+    int:    integer
+    byte:   integer
+    str:    string
+    strL:   string
+
+enum_ordered:
+  source_column: null
+  trigger_values: []
+
+section:
+  primary_column: null
+
+# Stata value labels come from pyreadstat metadata (handled specially by input_reader: stata)
+levels:
+  source_column: value_labels
+  format: stata_value_labels
+
+related_concepts: []
+
+custom_columns:
+  - vartype
+  - display_width
+  - format
+
+fixup_prompt: prompts/generic_fixup_prompt.md
+system_invariants_prompt: prompts/system_invariants_vlmd.md
+
+detection:
+  signature_columns:
+    strong:     []
+    supporting: []
+  confidence_threshold: 0.9
+  # .dta extension is definitive — no column scoring needed
+  file_extensions: [.dta]

@@ -1,0 +1,124 @@
+format_name: generic-csv
+description: Generic CSV data dictionary — auto-detects common column naming patterns
+
+input_reader: csv
+
+# Lists of candidate column names tried in order; first match in the file wins
+name_column:
+  - name
+  - variable
+  - var_name
+  - field_name
+  - "Variable / Field Name"
+  - "Variable Name"
+  - "Field Name"
+  - varname
+  - "variable_name"
+  - "VARIABLE"
+
+description_column:
+  - description
+  - label
+  - "Field Label"
+  - "Variable Label"
+  - field_label
+  - desc
+  - "LABEL"
+  - question
+  - "Question Text"
+
+title_column:
+  - title
+  - short_label
+  - short_name
+
+type_mapping:
+  source_column:
+    - type
+    - data_type
+    - field_type
+    - "Data Type"
+    - "Field Type"
+    - "TYPE"
+    - vartype
+  lookup:
+    # numeric
+    float:       number
+    double:      number
+    numeric:     number
+    decimal:     number
+    continuous:  number
+    real:        number
+    # integer
+    integer:     integer
+    int:         integer
+    whole:       integer
+    count:       integer
+    byte:        integer
+    long:        integer
+    # string/text
+    string:      string
+    text:        string
+    char:        string
+    varchar:     string
+    categorical: string
+    nominal:     string
+    ordinal:     string
+    character:   string
+    str:         string
+    # temporal
+    date:        date
+    datetime:    datetime
+    time:        time
+    # boolean
+    boolean:     boolean
+    bool:        boolean
+    yesno:       boolean
+
+enum_ordered:
+  source_column:
+    - measurement_level
+    - scale_type
+    - type_level
+  trigger_values: [ordinal, "Ordinal", "ORDINAL"]
+
+section:
+  primary_column:
+    - section
+    - form
+    - domain
+    - category
+    - instrument
+    - "Form Name"
+    - "Section"
+    - group
+
+levels:
+  source_column:
+    - choices
+    - levels
+    - values
+    - options
+    - "Choices, Calculations, OR Slider Labels"
+    - answer_options
+    - "Answer Options"
+    - "Response Options"
+    - categories
+  format: auto_detect
+
+related_concepts: []
+
+# For generic-csv, everything not mapped above goes to custom
+custom_columns: []
+capture_unmapped_as_custom: true
+
+fixup_prompt: prompts/generic_fixup_prompt.md
+system_invariants_prompt: prompts/system_invariants_vlmd.md
+
+detection:
+  # generic-csv is the fallback — it never "wins" via scoring, only used when nothing else matches
+  signature_columns:
+    strong:     []
+    supporting: []
+  confidence_threshold: 1.1   # never auto-detected; only used as explicit fallback
+  file_extensions: []

@@ -1,0 +1,69 @@
+format_name: hbcd
+description: HBCD (Healthy Brain and Child Development) study data dictionary — 25-column CSV format
+
+input_reader: csv
+
+name_column: name
+description_column: description
+title_column: instruction
+
+type_mapping:
+  source_column: type_data
+  lookup:
+    double:    number
+    integer:   integer
+    character: string
+    text:      string
+    date:      date
+    time:      time
+
+enum_ordered:
+  source_column: type_level
+  trigger_values: [ordinal]
+
+section:
+  primary_column:  domain
+  fallback_column: table_label
+
+levels:
+  source_column: levels1
+  format: json_array
+  value_key: value
+  label_key: label
+  label_cleaning: strip_outer_quotes
+
+related_concepts:
+  - url_column:    url_table
+    source_name:   "HBCD"
+    title_column:  table_label
+    require_http:  true
+
+custom_columns:
+  - unit
+  - metric
+  - atlas
+  - branching_logic
+  - identifier_columns
+  - source
+  - table_name
+  - table_label
+  - sub_domain
+  - study
+  - type_var
+  - type_field
+  - header
+  - order_display
+  - order_sort
+  - id
+
+# levels2 is excluded — always empty in HBCD
+
+fixup_prompt: prompts/hbcd_fixup_prompt.md
+system_invariants_prompt: prompts/system_invariants_vlmd.md
+
+detection:
+  signature_columns:
+    strong:     [type_level, type_data, levels1]
+    supporting: [domain, table_label, atlas, metric, url_table, type_var, type_field]
+  confidence_threshold: 0.6
+  file_extensions: []

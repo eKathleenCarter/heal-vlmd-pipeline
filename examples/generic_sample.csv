@@ -1,0 +1,9 @@
+variable_name,label,data_type,options,domain
+subject_id,Unique study subject identifier,string,,Identifiers
+enrollment_date,Date the subject enrolled in the study,date,,Enrollment
+age_years,Subject age in years at enrollment,integer,,Demographics
+biological_sex,Biological sex of the subject,string,"1, Male | 2, Female | 3, Intersex",Demographics
+education_level,Highest level of education completed,string,"1, Less than high school | 2, High school diploma or GED | 3, Some college | 4, Bachelor's degree | 5, Graduate degree",Demographics
+bmi,Body mass index calculated from height and weight,float,,Physical Measures
+opioid_naive,Whether the subject has never used opioids,boolean,"1, Yes | 0, No",Medical History
+pain_catastrophizing_score,Pain Catastrophizing Scale total score (range 0–52),integer,,Pain Assessment
