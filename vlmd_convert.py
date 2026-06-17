@@ -284,10 +284,36 @@ def row_to_vlmd_field(row: dict, spec: dict, resolved_cols: dict) -> dict:
     return field
 
 
+VALID_VLMD_TYPES = {"number", "integer", "string", "boolean", "date", "datetime", "time"}
+
+PLACEHOLDER_DESCRIPTIONS = {
+    "n/a", "na", "tbd", "see codebook", "see codebook.", "see notes", "see note",
+    "no description", "none", "missing", "unknown", "placeholder", "todo", "fill in",
+    "to be determined", "not available", "not applicable",
+}
+
+
 def flag_field(field: dict) -> list[str]:
     issues = []
-    if not field.get("description", "").strip():
+
+    desc = field.get("description", "").strip()
+    if not desc:
         issues.append("missing_description")
+    else:
+        if desc.lower().rstrip(".").strip() in PLACEHOLDER_DESCRIPTIONS:
+            issues.append("description_too_short")
+
+    ftype = field.get("type", "")
+    if not ftype:
+        issues.append("missing_type")
+    elif ftype not in VALID_VLMD_TYPES:
+        issues.append("type_not_in_schema")
+
+    enum_vals = (field.get("constraints") or {}).get("enum", [])
+    enum_labels = field.get("enumLabels") or {}
+    if enum_vals and not enum_labels:
+        issues.append("enum_without_labels")
+
     return issues
 
 

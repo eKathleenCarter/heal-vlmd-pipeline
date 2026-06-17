@@ -14,10 +14,15 @@ import yaml
 
 from llm_client import DEFAULT_MODEL, MODELS, call_llm, parse_json_response
 
-MAX_ROWS_PER_CHUNK = 30
+MAX_ROWS_PER_CHUNK = 10   # conservative: wrapper format (field+justification+sources) is ~3x bare fields
+MAX_TOKENS_OUT = 8192
 MAX_RETRIES = 2
 ENCODING = tiktoken.get_encoding("cl100k_base")
 PROMPTS_DIR = Path(__file__).parent / "prompts"
+
+# Rough token budget: warn if input alone suggests the output may overflow
+# (each record ≈ 200 tokens of metadata on top of the field content)
+OUTPUT_OVERHEAD_PER_RECORD = 200
 
 
 def count_tokens(text: str) -> int:
@@ -50,7 +55,16 @@ def load_prompts_from_spec(format_yaml: str | None) -> tuple[str, str]:
 def process_chunk(system: str, base_prompt: str, chunk: list,
                   model_key: str, attempt: int = 0) -> list:
     user_msg = base_prompt + "\n\nFields to fix:\n" + json.dumps(chunk, indent=2, ensure_ascii=False)
-    raw, ok, err = call_llm(system, user_msg, model_key=model_key, max_tokens=4096)
+
+    # Warn if input is large enough that output might still overflow
+    input_tokens = count_tokens(system + user_msg)
+    est_output = len(chunk) * OUTPUT_OVERHEAD_PER_RECORD + input_tokens // 2
+    if est_output > MAX_TOKENS_OUT * 0.85:
+        print(f"  WARNING: chunk may be near token limit "
+              f"(~{est_output} est. output tokens, limit {MAX_TOKENS_OUT}). "
+              "Consider reducing MAX_ROWS_PER_CHUNK.", flush=True)
+
+    raw, ok, err = call_llm(system, user_msg, model_key=model_key, max_tokens=MAX_TOKENS_OUT)
 
     if not ok:
         raise RuntimeError(f"LLM call failed: {err}")
@@ -113,12 +127,25 @@ def fixup(lint_path: str, output_path: str, checkpoint_path: str,
         print(f"  [{item['name']}]  will fix: {', '.join(item['issues'])}", flush=True)
     system, base_prompt = load_prompts_from_spec(format_yaml)
 
-    # Load checkpoint
+    # Fingerprint the current input so stale checkpoints are detected
+    input_fingerprint = "|".join(
+        f"{item['name']}:{','.join(item['issues'])}" for item in items_for_llm
+    )
+
+    # Load checkpoint — invalidate if the flagged field list changed
     checkpoint = {}
     if Path(checkpoint_path).exists():
         try:
-            checkpoint = json.loads(Path(checkpoint_path).read_text(encoding="utf-8"))
-            print(f"  Resuming from checkpoint ({len(checkpoint)} chunks done)", flush=True)
+            saved = json.loads(Path(checkpoint_path).read_text(encoding="utf-8"))
+            if saved.get("_fingerprint") == input_fingerprint:
+                checkpoint = {k: v for k, v in saved.items() if not k.startswith("_")}
+                print(f"  Resuming from checkpoint ({len(checkpoint)} chunks done)", flush=True)
+            else:
+                print(
+                    "  Checkpoint invalidated — flagged fields changed since last run. "
+                    "Starting fresh.",
+                    flush=True,
+                )
         except Exception:
             checkpoint = {}
 
@@ -145,7 +172,9 @@ def fixup(lint_path: str, output_path: str, checkpoint_path: str,
 
         checkpoint[chunk_key] = wrapped
         Path(checkpoint_path).write_text(
-            json.dumps(checkpoint, indent=2, ensure_ascii=False), encoding="utf-8"
+            json.dumps({"_fingerprint": input_fingerprint, **checkpoint},
+                       indent=2, ensure_ascii=False),
+            encoding="utf-8",
         )
         all_wrapped.extend(wrapped)
 
