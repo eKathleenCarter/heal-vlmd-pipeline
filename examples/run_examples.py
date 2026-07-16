@@ -73,6 +73,7 @@ def main():
             skip_llm=True,            # no credentials needed for examples
             no_detect=True,           # format explicitly specified
             output_dir=OUTPUT_DIR / ex["appl_id"],
+            split_by_form="no",       # fully automated demo — no interactive prompts
         )
         results.append((ex["name"], rc))
 

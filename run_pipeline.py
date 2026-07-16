@@ -45,6 +45,8 @@ def run(
     output_dir: Path = OUTPUT_DIR,
     yes: bool = False,
     dest_dir: Path | None = None,
+    max_file_size_mb: float = 100,
+    split_by_form: str = "ask",
 ) -> int:
     # ── Derive file stem ──────────────────────────────────────────────────────
     file_name = name or _derive_name(input_file)
@@ -197,6 +199,15 @@ def run(
     # ── Step 5: Merge and write output ────────────────────────────────────────
     _banner("Step 5: Merge and write output")
     from vlmd_merge import merge
+    from vlmd_split import confirm_form_split, section_counts
+
+    converted_fields = json.loads(Path(converted_path).read_text(encoding="utf-8"))
+    sections = section_counts(converted_fields)
+    split_by_form_decision = False
+    if len(sections) > 1:
+        split_by_form_decision = confirm_form_split(
+            list(sections.keys()), mode=split_by_form, yes=yes
+        )
 
     rc = merge(
         converted_path,
@@ -210,6 +221,8 @@ def run(
         validate=True,
         file_stem=file_stem,
         input_filename=Path(input_file).name,
+        max_file_size_mb=max_file_size_mb,
+        split_by_form=split_by_form_decision,
     )
     if rc != 0:
         return rc
@@ -223,19 +236,48 @@ def run(
     # ── Copy to destination repository (optional) ─────────────────────────────
     if dest_dir and hdp_id:
         dest_hdp = dest_dir / hdp_id
-        dest_vlmd = dest_hdp / "vlmd" / file_stem
+        dest_vlmd_root = dest_hdp / "vlmd"
         dest_input = dest_hdp / "input"
 
         _banner(f"Copying to {dest_dir}")
-        dest_vlmd.mkdir(parents=True, exist_ok=True)
+        dest_vlmd_root.mkdir(parents=True, exist_ok=True)
         dest_input.mkdir(parents=True, exist_ok=True)
 
+        # Sibling section form-folders written by vlmd_merge.py when the
+        # combined output exceeded GitHub's size limit (e.g. HDP01258_.._Demographics/),
+        # mirroring how this repo represents studies with multiple data
+        # dictionaries (TG2_Adult/, TG2_Youth/, etc).
+        vlmd_root = vlmd_out.parent
+        split_dirs = sorted(
+            d for d in vlmd_root.glob(f"{file_stem}_*") if d.is_dir()
+        )
+
         copied = 0
-        for pattern in ("*.vlmd.json", "*.vlmd.csv", "metadata.yaml"):
-            for src in vlmd_out.glob(pattern):
-                shutil.copy2(src, dest_vlmd / src.name)
-                print(f"  {src.name} → {dest_vlmd}", flush=True)
-                copied += 1
+        if split_dirs:
+            # The combined folder (vlmd_out) may still exceed GitHub's size
+            # limit, so only the per-section form-folders (each under the
+            # limit) are copied to the repo that gets pushed to GitHub. The
+            # combined folder stays in output/ locally as the full reference copy.
+            print(
+                "  NOTE: output was split by section — copying each section's "
+                "form-folder; combined folder stays local.",
+                flush=True,
+            )
+            for src_dir in split_dirs:
+                dest_dir_path = dest_vlmd_root / src_dir.name
+                dest_dir_path.mkdir(parents=True, exist_ok=True)
+                for src in src_dir.glob("*"):
+                    shutil.copy2(src, dest_dir_path / src.name)
+                    print(f"  {src_dir.name}/{src.name} → {dest_dir_path}", flush=True)
+                    copied += 1
+        else:
+            dest_vlmd = dest_vlmd_root / file_stem
+            dest_vlmd.mkdir(parents=True, exist_ok=True)
+            for pattern in ("*.vlmd.json", "*.vlmd.csv", "metadata.yaml"):
+                for src in vlmd_out.glob(pattern):
+                    shutil.copy2(src, dest_vlmd / src.name)
+                    print(f"  {src.name} → {dest_vlmd}", flush=True)
+                    copied += 1
 
         if src_input.exists():
             shutil.copy2(src_input, dest_input / src_input.name)
@@ -311,6 +353,14 @@ Examples:
                     help="Root of destination repository (e.g. heal-data-dictionaries/data-dictionaries). "
                          "Files are copied to {dest-dir}/{hdp-id}/vlmd/{stem}/ and {dest-dir}/{hdp-id}/input/ "
                          "after validation passes.")
+    ap.add_argument("--max-file-size-mb", type=float, default=100,
+                    help="Split VLMD output into multiple files (by section) if it would exceed "
+                         "this size in MB. Default: 100 (GitHub's hard file size limit).")
+    ap.add_argument("--split-by-form", choices=("ask", "yes", "no"), default="ask",
+                    help="When a data dictionary has multiple sections/forms: 'ask' prompts "
+                         "interactively (default; defaults to 'no' under --yes), 'yes' always "
+                         "splits into one form-folder per section, 'no' always keeps them "
+                         "combined (size-based splitting can still apply as a safety net).")
 
     args = ap.parse_args()
 
@@ -334,6 +384,8 @@ Examples:
         output_dir=output_dir,
         yes=args.yes,
         dest_dir=Path(args.dest_dir) if args.dest_dir else None,
+        max_file_size_mb=args.max_file_size_mb,
+        split_by_form=args.split_by_form,
     ))
 
 
