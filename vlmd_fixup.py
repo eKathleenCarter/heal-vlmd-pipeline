@@ -12,6 +12,7 @@ from pathlib import Path
 import tiktoken
 import yaml
 
+from cli_ui import print_progress
 from llm_client import DEFAULT_MODEL, MODELS, call_llm, parse_json_response
 
 MAX_ROWS_PER_CHUNK = 10   # conservative: wrapper format (field+justification+sources) is ~3x bare fields
@@ -154,21 +155,19 @@ def fixup(lint_path: str, output_path: str, checkpoint_path: str,
 
     # all_wrapped: list of {field, justification, sources} dicts
     all_wrapped = []
+    t_start = time.time()
     for i, chunk in enumerate(chunks):
         chunk_key = str(i)
         if chunk_key in checkpoint:
-            print(f"  Chunk {i + 1}/{len(chunks)}: skipped (checkpoint)", flush=True)
             all_wrapped.extend(checkpoint[chunk_key])
+            print_progress(i + 1, len(chunks), time.time() - t_start, label="Fixup")
             continue
 
-        print(f"  Chunk {i + 1}/{len(chunks)}: {len(chunk)} records ...", end=" ", flush=True)
-        t0 = time.time()
         try:
             wrapped = process_chunk(system, base_prompt, chunk, model_key)
         except Exception as e:
             print(f"\nERROR in chunk {i}: {e}", file=sys.stderr)
             return 1
-        print(f"done ({time.time() - t0:.1f}s)", flush=True)
 
         checkpoint[chunk_key] = wrapped
         Path(checkpoint_path).write_text(
@@ -177,19 +176,22 @@ def fixup(lint_path: str, output_path: str, checkpoint_path: str,
             encoding="utf-8",
         )
         all_wrapped.extend(wrapped)
-
-    # Print per-field LLM decisions
+        print_progress(i + 1, len(chunks), time.time() - t_start, label="Fixup")
     print(flush=True)
-    for item in all_wrapped:
+
+    # Print a capped preview of LLM decisions — the full reasoning for every
+    # field lives in the cleanup log (see cleanup_log_path below), so this is
+    # just enough to spot-check, not a dump of everything.
+    preview_limit = 10
+    for item in all_wrapped[:preview_limit]:
         name = item["field"].get("name", "?")
         justification = item.get("justification", "")
-        sources = item.get("sources", [])
         print(f"  [{name}]", flush=True)
         if justification:
             print(f"    Justification: {justification}", flush=True)
-        if sources:
-            for s in sources:
-                print(f"    Source: {s}", flush=True)
+    if len(all_wrapped) > preview_limit:
+        print(f"  ... and {len(all_wrapped) - preview_limit} more "
+              f"(full reasoning in the cleanup log)", flush=True)
 
     # Extract bare VLMD fields for the merge step
     all_fixed = [item["field"] for item in all_wrapped]

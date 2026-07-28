@@ -85,6 +85,15 @@ content. Replace it entirely using the same approach as `missing_description`.
 
 ---
 
+### `encoding_corruption`
+`description` or `title` still contains an unrecoverable replacement character (�) after
+automatic mojibake/smart-quote repair — the original bytes were already lost before this
+pipeline ever saw the file. Write a clean replacement using the surrounding text and other
+`source_row` columns, following the same approach as `missing_description`. Do not attempt
+to guess at or reproduce the corrupted character(s).
+
+---
+
 ### `missing_type`
 Use the `Field Type` → VLMD type mapping table above.
 Also check `source_row["Text Validation Type OR Show Slider Number"]` for text fields.

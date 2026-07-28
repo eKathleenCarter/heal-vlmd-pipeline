@@ -88,6 +88,15 @@ content. Replace it entirely following the same rules as `missing_description`.
 
 ---
 
+### `encoding_corruption`
+`description` or `title` still contains an unrecoverable replacement character (�) after
+automatic mojibake/smart-quote repair — the original bytes were already lost before this
+pipeline ever saw the file. Write a clean replacement using `table_label`, `domain`,
+`sub_domain`, and the variable name, following the same rules as `missing_description`.
+Do not attempt to guess at or reproduce the corrupted character(s).
+
+---
+
 ### `missing_type`
 Infer the VLMD type from the source row and variable name:
 

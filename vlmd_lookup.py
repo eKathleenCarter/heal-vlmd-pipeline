@@ -13,6 +13,8 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+from cli_ui import bold, bold_yellow
+
 HEAL_MDS_BASE = "https://healdata.org/mds/metadata"
 
 
@@ -88,7 +90,7 @@ def display_study_info(hdp_id: str, info: dict):
             print(line)
 
     print()
-    print(f"  HEAL Platform — {hdp_id}")
+    print(bold_yellow(f"  HEAL Platform — {hdp_id}"))
     print(f"  {div}")
     row("Study:", info["study_name"])
     if info["alternative_name"] and info["alternative_name"] != info["study_name"]:
@@ -150,7 +152,7 @@ def confirm_study(yes: bool = False) -> bool:
     if yes:
         return True
     try:
-        answer = input("  Proceed with this study? [Y/n]: ").strip().lower()
+        answer = input(f"  {bold('Proceed with this study? [Y/n]:')} ").strip().lower()
         return answer in ("", "y", "yes")
     except (EOFError, KeyboardInterrupt):
         # Non-interactive environment — require explicit --yes

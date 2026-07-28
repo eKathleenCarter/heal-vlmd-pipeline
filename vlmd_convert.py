@@ -12,8 +12,11 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import ftfy
 import pandas as pd
 import yaml
+
+from cli_ui import bold_yellow
 
 
 def _detect_encoding(file_path: str) -> str:
@@ -301,6 +304,57 @@ def row_to_vlmd_field(row: dict, spec: dict, resolved_cols: dict) -> dict:
     return field
 
 
+# ── Encoding cleanup (deterministic, no LLM) ─────────────────────────────────
+# Mojibake and smart-quote/dash artifacts are a mechanical encoding problem, not
+# a judgment call — ftfy fixes them the same way every time, so this runs for
+# every field automatically. The one thing it can't fix is an actual replacement
+# character (U+FFFD): that means bytes were already lost before we ever saw the
+# file, so it's flagged for a human/LLM to track down the original value instead.
+
+ENCODING_FIX_KEYS = ("description", "title")
+
+
+def clean_field_encoding(field: dict) -> list[dict]:
+    """Fix mojibake/smart-quote artifacts in a field's text values in place.
+
+    Returns a list of fix records — {"field", "key", "before", "after",
+    "unrecoverable"} — for anything changed, plus any leftover replacement
+    characters ftfy couldn't repair (unrecoverable=True, before==after).
+    """
+    fixes = []
+    name = field.get("name", "")
+
+    def _check(key: str, val: str):
+        if not val:
+            return
+        fixed = ftfy.fix_text(val)
+        if fixed != val:
+            fixes.append({
+                "field": name, "key": key, "before": val, "after": fixed,
+                "unrecoverable": "�" in fixed,
+            })
+            return fixed
+        if "�" in val:
+            fixes.append({
+                "field": name, "key": key, "before": val, "after": val,
+                "unrecoverable": True,
+            })
+        return val
+
+    for key in ENCODING_FIX_KEYS:
+        val = field.get(key)
+        if val:
+            field[key] = _check(key, val)
+
+    enum_labels = field.get("enumLabels")
+    if enum_labels:
+        for k, v in list(enum_labels.items()):
+            if v:
+                enum_labels[k] = _check(f"enumLabels.{k}", v)
+
+    return fixes
+
+
 VALID_VLMD_TYPES = {"number", "integer", "string", "boolean", "date", "datetime", "time"}
 
 PLACEHOLDER_DESCRIPTIONS = {
@@ -308,6 +362,11 @@ PLACEHOLDER_DESCRIPTIONS = {
     "no description", "none", "missing", "unknown", "placeholder", "todo", "fill in",
     "to be determined", "not available", "not applicable",
 }
+
+# Descriptions at or below this word count are flagged even if they don't match
+# a known placeholder — real source data has truncated/fragment text (e.g. "not")
+# that isn't a recognized placeholder string but is still too short to be useful.
+DESCRIPTION_REVIEW_MAX_WORDS = 1
 
 
 def flag_field(field: dict) -> list[str]:
@@ -317,8 +376,14 @@ def flag_field(field: dict) -> list[str]:
     if not desc:
         issues.append("missing_description")
     else:
-        if desc.lower().rstrip(".").strip() in PLACEHOLDER_DESCRIPTIONS:
+        normalized = desc.lower().rstrip(".").strip()
+        is_known_placeholder = normalized in PLACEHOLDER_DESCRIPTIONS
+        is_suspiciously_short = len(desc.split()) <= DESCRIPTION_REVIEW_MAX_WORDS
+        if is_known_placeholder or is_suspiciously_short:
             issues.append("description_too_short")
+
+    if "�" in desc or "�" in field.get("title", ""):
+        issues.append("encoding_corruption")
 
     ftype = field.get("type", "")
     if not ftype:
@@ -394,9 +459,12 @@ def check_unaccounted_columns(spec: dict, resolved: dict, df_columns: set[str]) 
     accounted = _accounted_columns(spec, resolved) | excluded_names
     unaccounted = sorted(df_columns - accounted)
     if unaccounted:
-        print(f"  WARNING: {len(unaccounted)} input column(s) are not mapped, not in "
-              f"custom_columns, and not documented in excluded_columns: {unaccounted}",
-              file=sys.stderr, flush=True)
+        warning = bold_yellow(
+            f"WARNING: {len(unaccounted)} input column(s) are not mapped, not in "
+            f"custom_columns, and not documented in excluded_columns:",
+            stream=sys.stderr,
+        )
+        print(f"  {warning} {unaccounted}", file=sys.stderr, flush=True)
         print("    Add each to custom_columns (to keep it) or excluded_columns "
               "(with a reason, to document why it's dropped).", file=sys.stderr, flush=True)
 
@@ -438,10 +506,12 @@ def convert(input_path: str, format_yaml: str,
 
     fields = []
     lint_records = []
+    encoding_fixes = []
 
     for _, row in df.iterrows():
         row_dict = row.to_dict()
         field = row_to_vlmd_field(row_dict, spec, resolved)
+        encoding_fixes.extend(clean_field_encoding(field))
         issues = flag_field(field)
         fields.append(field)
         if issues:
@@ -458,6 +528,18 @@ def convert(input_path: str, format_yaml: str,
     Path(output_lint).write_text(
         json.dumps(lint_records, indent=2, ensure_ascii=False), encoding="utf-8"
     )
+
+    if encoding_fixes:
+        repaired = [f for f in encoding_fixes if not f["unrecoverable"]]
+        unrecoverable = [f for f in encoding_fixes if f["unrecoverable"]]
+        encoding_fixes_path = Path(output_lint).parent / "vlmd_encoding_fixes.json"
+        encoding_fixes_path.write_text(
+            json.dumps(encoding_fixes, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+        print(f"  Encoding fixes: {len(repaired)} field value(s) auto-corrected "
+              f"(mojibake/smart quotes — no LLM used); {len(unrecoverable)} have "
+              f"unrecoverable corruption flagged for review. See {encoding_fixes_path}",
+              flush=True)
 
     names = [f["name"] for f in fields]
     dupes = len(names) - len(set(names))
