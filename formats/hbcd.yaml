@@ -5,7 +5,7 @@ input_reader: csv
 
 name_column: name
 description_column:
-  combine: [description, header]
+  combine: [header, description]
   separator: " | "
 title_column: instruction
 
