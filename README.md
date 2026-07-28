@@ -392,9 +392,13 @@ description: Human-readable description
 
 input_reader: csv          # csv (default) or stata
 
-# Column mapping — string for exact name, list to try candidates in order
+# Column mapping — string for exact name, list to try candidates in order,
+# or {combine: [...], separator: ...} to join multiple columns into one value
 name_column: "Variable Name"
 description_column: "Description"
+# description_column:
+#   combine: [Description, Header]
+#   separator: " | "        # default: " | "
 title_column: null         # omit if no source column
 
 type_mapping:

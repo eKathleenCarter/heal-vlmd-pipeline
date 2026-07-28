@@ -127,8 +127,13 @@ def parse_levels(raw: str, levels_spec: dict | None) -> tuple[list[str], dict[st
 
 # ── Column resolution helpers ────────────────────────────────────────────────
 
-def resolve_column_spec(spec: Any, df_columns: set[str]) -> str | None:
-    """Resolve a column spec (string or list of candidates) to an actual column name."""
+def resolve_column_spec(spec: Any, df_columns: set[str]) -> str | dict | None:
+    """Resolve a column spec to an actual column name (or combine descriptor).
+
+    - str            -> exact column name, if present
+    - list           -> first candidate present in df_columns (fallback order)
+    - {combine: [...], separator: ...} -> descriptor joining multiple columns
+    """
     if spec is None:
         return None
     if isinstance(spec, str):
@@ -137,17 +142,29 @@ def resolve_column_spec(spec: Any, df_columns: set[str]) -> str | None:
         for candidate in spec:
             if candidate and candidate in df_columns:
                 return candidate
+        return None
+    if isinstance(spec, dict) and "combine" in spec:
+        cols = [c for c in spec["combine"] if c and c in df_columns]
+        if not cols:
+            return None
+        return {"combine": cols, "separator": spec.get("separator", " | ")}
     return None
 
 
-def get_val(row: dict, col: str | None) -> str:
-    if not col:
-        return ""
-    v = row.get(col, "")
+def _clean_scalar(v: Any) -> str:
     if v is None or (isinstance(v, float) and pd.isna(v)):
         return ""
     s = str(v).strip()
     return "" if s.lower() == "nan" else s
+
+
+def get_val(row: dict, col: str | dict | None) -> str:
+    if not col:
+        return ""
+    if isinstance(col, dict) and "combine" in col:
+        parts = [_clean_scalar(row.get(c, "")) for c in col["combine"]]
+        return col.get("separator", " | ").join(p for p in parts if p)
+    return _clean_scalar(row.get(col, ""))
 
 
 # ── Stata reader ──────────────────────────────────────────────────────────────
@@ -270,7 +287,7 @@ def row_to_vlmd_field(row: dict, spec: dict, resolved_cols: dict) -> dict:
 
     # capture_unmapped_as_custom: send everything else to custom
     if spec.get("capture_unmapped_as_custom"):
-        accounted = set(resolved_cols.values()) | set(explicit_custom)
+        accounted = _accounted_columns(spec, resolved_cols)
         for col, val in row.items():
             if col in accounted:
                 continue
@@ -343,6 +360,47 @@ def resolve_all_columns(spec: dict, df_columns: set[str]) -> dict:
     return r
 
 
+def _accounted_columns(spec: dict, resolved: dict) -> set[str]:
+    """All source columns that are mapped to a VLMD field or custom_columns."""
+    accounted: set[str] = set(spec.get("custom_columns", []))
+    for v in resolved.values():
+        if isinstance(v, dict) and "combine" in v:
+            accounted.update(v["combine"])
+        elif v:
+            accounted.add(v)
+    for rc_spec in spec.get("related_concepts") or []:
+        for key in ("url_column", "title_column"):
+            col = rc_spec.get(key)
+            if col:
+                accounted.add(col)
+    return accounted
+
+
+def check_unaccounted_columns(spec: dict, resolved: dict, df_columns: set[str]) -> None:
+    """Warn about input columns that are neither mapped/custom nor documented
+    in excluded_columns — every source column's fate should be traceable."""
+    excluded = spec.get("excluded_columns") or []
+    excluded_names = {e.get("column") if isinstance(e, dict) else e for e in excluded}
+    excluded_names.discard(None)
+
+    stale = sorted(excluded_names - df_columns)
+    if stale:
+        print(f"  NOTE: excluded_columns lists column(s) not present in this input: {stale}",
+              flush=True)
+
+    if spec.get("capture_unmapped_as_custom"):
+        return  # every unmapped column is captured automatically — nothing silently dropped
+
+    accounted = _accounted_columns(spec, resolved) | excluded_names
+    unaccounted = sorted(df_columns - accounted)
+    if unaccounted:
+        print(f"  WARNING: {len(unaccounted)} input column(s) are not mapped, not in "
+              f"custom_columns, and not documented in excluded_columns: {unaccounted}",
+              file=sys.stderr, flush=True)
+        print("    Add each to custom_columns (to keep it) or excluded_columns "
+              "(with a reason, to document why it's dropped).", file=sys.stderr, flush=True)
+
+
 # ── Main convert function ─────────────────────────────────────────────────────
 
 def convert(input_path: str, format_yaml: str,
@@ -375,6 +433,8 @@ def convert(input_path: str, format_yaml: str,
           f"description={resolved['description_column']!r}, "
           f"type={resolved['type_mapping_column']!r}, "
           f"section={resolved['section_primary_column']!r}", flush=True)
+
+    check_unaccounted_columns(spec, resolved, df_cols)
 
     fields = []
     lint_records = []

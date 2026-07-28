@@ -4,7 +4,9 @@ description: HBCD (Healthy Brain and Child Development) study data dictionary �
 input_reader: csv
 
 name_column: name
-description_column: description
+description_column:
+  combine: [description, header]
+  separator: " | "
 title_column: instruction
 
 type_mapping:
@@ -32,31 +34,37 @@ levels:
   label_key: label
   label_cleaning: strip_outer_quotes
 
-related_concepts:
-  - url_column:    url_table
-    source_name:   "HBCD"
-    title_column:  table_label
-    require_http:  true
-
 custom_columns:
   - unit
   - metric
   - atlas
   - branching_logic
-  - identifier_columns
   - source
+  - domain
+  - url_table
   - table_name
   - table_label
   - sub_domain
-  - study
-  - type_var
-  - type_field
-  - header
-  - order_display
-  - order_sort
-  - id
 
-# levels2 is excluded — always empty in HBCD
+excluded_columns:
+  - column: levels2
+    reason: Always empty in HBCD — secondary levels column unused.
+  - column: type_var
+    reason: Internal REDCap variable-type code, redundant with type_data.
+  - column: type_field
+    reason: Internal REDCap field-type code, redundant with type_data.
+  - column: order_display
+    reason: Presentation-order hint for HBCD's own display; not a VLMD schema attribute.
+  - column: order_sort
+    reason: Presentation-order hint for HBCD's own display; not a VLMD schema attribute.
+  - column: identifier_columns
+    reason: >-
+      Lists which columns in the source table act as identifiers.
+      Not mapped yet — revisit if we need to expose identifier info in VLMD.
+  - column: study
+    reason: Constant "HBCD" for every row in this format; carries no per-variable information.
+  - column: id
+    reason: Internal row/record id, not a data dictionary attribute.
 
 fixup_prompt: prompts/hbcd_fixup_prompt.md
 system_invariants_prompt: prompts/system_invariants_vlmd.md
