@@ -145,17 +145,17 @@ def lookup(hdp_id: str, provided_appl_id: str | None = None) -> tuple[str | None
     return fetched_appl_id or provided_appl_id, info
 
 
-def confirm_study(yes: bool = False) -> bool:
+def confirm_study(no_confirm: bool = False) -> bool:
     """Prompt the user to confirm. Returns True to proceed, False to abort."""
-    if yes:
+    if no_confirm:
         return True
     try:
         answer = input("  Proceed with this study? [Y/n]: ").strip().lower()
         return answer in ("", "y", "yes")
     except (EOFError, KeyboardInterrupt):
-        # Non-interactive environment — require explicit --yes
+        # Non-interactive environment — require explicit --no-confirm
         print(
-            "\n  Non-interactive session detected. Pass --yes to skip confirmation.",
+            "\n  Non-interactive session detected. Pass --no-confirm to skip confirmation.",
             file=sys.stderr,
         )
         return False

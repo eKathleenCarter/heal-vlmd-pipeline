@@ -17,9 +17,12 @@ import yaml
 
 
 def _detect_encoding(file_path: str) -> str:
+    # Must check the whole file, not just a sample — a non-UTF-8 byte
+    # anywhere (e.g. after a manual edit in Excel/TextEdit) will otherwise
+    # be missed here and crash pandas partway through the real read.
     try:
         with open(file_path, encoding="utf-8") as f:
-            f.read(4096)
+            f.read()
         return "utf-8"
     except UnicodeDecodeError:
         return "latin-1"
@@ -198,12 +201,41 @@ def row_to_vlmd_field(row: dict, spec: dict, resolved_cols: dict) -> dict:
 
     # type
     type_col = resolved_cols.get("type_mapping_column")
+    raw_type = ""
     if type_col:
         raw_type = get_val(row, type_col).lower()
         lookup = spec.get("type_mapping", {}).get("lookup", {})
         vlmd_type = lookup.get(raw_type)
         if vlmd_type:
             field["type"] = vlmd_type
+
+    # type_override: when the primary type is a generic fallback (e.g. "text"→string),
+    # use a secondary column (e.g. Text Validation Type) for a more specific VLMD type.
+    override_spec = spec.get("type_override")
+    if override_spec and raw_type == override_spec.get("when_type_equals", "").lower():
+        override_col = resolved_cols.get("type_override_column")
+        if override_col:
+            override_raw = get_val(row, override_col).lower()
+            override_type = override_spec.get("lookup", {}).get(override_raw)
+            if override_type:
+                field["type"] = override_type
+
+    # boolean_values: for boolean fields with known true/false strings, emit
+    # constraints.enum + enumLabels (same pattern as other enumerated fields).
+    bv_spec = spec.get("boolean_values")
+    if bv_spec and field.get("type") == "boolean":
+        bv_col = resolved_cols.get("boolean_values_column")
+        if bv_col:
+            src_type = get_val(row, bv_col).lower()
+            bv_mapping = {k.lower(): v for k, v in bv_spec.get("mapping", {}).items()}
+            bv = bv_mapping.get(src_type)
+            if bv:
+                true_vals = bv.get("trueValues", [])
+                false_vals = bv.get("falseValues", [])
+                enum_vals = true_vals + false_vals
+                if enum_vals:
+                    field.setdefault("constraints", {})["enum"] = enum_vals
+                    field["enumLabels"] = {v: v for v in enum_vals}
 
     # enumOrdered
     ordered_col = resolved_cols.get("enum_ordered_column")
@@ -234,6 +266,20 @@ def row_to_vlmd_field(row: dict, spec: dict, resolved_cols: dict) -> dict:
         if enum_values:
             field.setdefault("constraints", {})["enum"] = enum_values
             field["enumLabels"] = enum_labels
+
+    # If all enum values are integers and type is still string, upgrade to integer.
+    if field.get("type") == "string":
+        enum_vals = (field.get("constraints") or {}).get("enum", [])
+        if enum_vals:
+            try:
+                [int(v) for v in enum_vals]
+                field["type"] = "integer"
+            except (ValueError, TypeError):
+                pass
+
+    # Drop enumLabels when every label is identical to its key — redundant with constraints.enum.
+    if field.get("enumLabels") and all(k == v for k, v in field["enumLabels"].items()):
+        del field["enumLabels"]
 
     # relatedConcepts
     rel_concepts = []
@@ -309,11 +355,6 @@ def flag_field(field: dict) -> list[str]:
     elif ftype not in VALID_VLMD_TYPES:
         issues.append("type_not_in_schema")
 
-    enum_vals = (field.get("constraints") or {}).get("enum", [])
-    enum_labels = field.get("enumLabels") or {}
-    if enum_vals and not enum_labels:
-        issues.append("enum_without_labels")
-
     return issues
 
 
@@ -327,6 +368,12 @@ def resolve_all_columns(spec: dict, df_columns: set[str]) -> dict:
     r["title_column"] = resolve_column_spec(spec.get("title_column"), df_columns)
     r["type_mapping_column"] = resolve_column_spec(
         spec.get("type_mapping", {}).get("source_column"), df_columns
+    )
+    r["type_override_column"] = resolve_column_spec(
+        (spec.get("type_override") or {}).get("source_column"), df_columns
+    )
+    r["boolean_values_column"] = resolve_column_spec(
+        (spec.get("boolean_values") or {}).get("source_column"), df_columns
     )
     r["enum_ordered_column"] = resolve_column_spec(
         (spec.get("enum_ordered") or {}).get("source_column"), df_columns
