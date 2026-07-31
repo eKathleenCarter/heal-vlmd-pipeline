@@ -43,7 +43,7 @@ def run(
     skip_llm: bool = False,
     no_detect: bool = False,
     output_dir: Path = OUTPUT_DIR,
-    yes: bool = False,
+    no_confirm: bool = False,
     dest_dir: Path | None = None,
     max_file_size_mb: float = 100,
     split_by_form: str = "ask",
@@ -63,6 +63,23 @@ def run(
     input_copy_dir = output_dir / "input"
     input_copy_dir.mkdir(parents=True, exist_ok=True)
 
+    # ── Step 0a: PDF pre-extraction ──────────────────────────────────────────
+    # If the input is a PDF, extract variables to an intermediate CSV first,
+    # then continue with the normal detect → convert → fixup pipeline on that CSV.
+    if Path(input_file).suffix.lower() == ".pdf":
+        _banner("Step 0a: PDF extraction")
+        from vlmd_pdf import extract as pdf_extract
+
+        extracted_csv = str(work_subdir / f"{Path(input_file).stem}_extracted.csv")
+        rc = pdf_extract(input_file, extracted_csv, model_key=model)
+        if rc != 0:
+            return rc
+        print(f"  PDF extraction complete — continuing pipeline on: {extracted_csv}", flush=True)
+        input_file = extracted_csv
+        # The extracted CSV always uses generic-csv columns — skip format detection.
+        if not format_yaml:
+            format_yaml = str(PIPELINE_DIR / "formats" / "generic-csv.yaml")
+
     # ── Step 0: HEAL platform lookup ─────────────────────────────────────────
     if hdp_id:
         _banner("Step 0: HEAL platform lookup")
@@ -75,7 +92,7 @@ def run(
             if title == "HEAL Study Data Dictionary" and study_info.get("study_name"):
                 title = study_info["study_name"]
 
-        if study_info and not confirm_study(yes=yes):
+        if study_info and not confirm_study(no_confirm=no_confirm):
             print("  Aborted.", flush=True)
             return 1
 
@@ -319,7 +336,7 @@ Examples:
     --format formats/hbcd.yaml --name HBCD_datadictionary
 
   # Non-interactive / scripted use
-  python run_pipeline.py --input data_dict.csv --hdp-id HDP01258 --yes
+  python run_pipeline.py --input data_dict.csv --hdp-id HDP01258 --no-confirm
 
   # Skip LLM (deterministic only)
   python run_pipeline.py --input data_dict.csv --hdp-id HDP01258 --skip-llm
@@ -347,8 +364,8 @@ Examples:
     ap.add_argument("--skip-llm", action="store_true", help="Skip LLM fixup step")
     ap.add_argument("--no-detect", action="store_true",
                     help="Skip format detection (requires --format)")
-    ap.add_argument("--yes", "-y", action="store_true",
-                    help="Skip study confirmation prompt (for scripted/bot use)")
+    ap.add_argument("--no-confirm", action="store_true",
+                    help="Skip the study confirmation prompt (for scripted/non-interactive use)")
     ap.add_argument("--dest-dir", default=None,
                     help="Root of destination repository (e.g. heal-data-dictionaries/data-dictionaries). "
                          "Files are copied to {dest-dir}/{hdp-id}/vlmd/{stem}/ and {dest-dir}/{hdp-id}/input/ "
@@ -382,7 +399,7 @@ Examples:
         skip_llm=args.skip_llm,
         no_detect=args.no_detect,
         output_dir=output_dir,
-        yes=args.yes,
+        no_confirm=args.no_confirm,
         dest_dir=Path(args.dest_dir) if args.dest_dir else None,
         max_file_size_mb=args.max_file_size_mb,
         split_by_form=args.split_by_form,
