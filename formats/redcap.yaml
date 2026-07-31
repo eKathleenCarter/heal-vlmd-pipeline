@@ -23,10 +23,41 @@ type_mapping:
     descriptive: string
     date:        date
     datetime:    datetime
+    any:         string
+
+# When Field Type is "text", use the Text Validation Type column to pick a
+# more specific VLMD type (integer, number, date, time, datetime).
+type_override:
+  when_type_equals: text
+  source_column: "Text Validation Type OR Show Slider Number"
+  lookup:
+    integer:              integer
+    number:               number
+    date_mdy:             date
+    date_dmy:             date
+    date_ymd:             date
+    time:                 time
+    datetime_mdy:         datetime
+    datetime_dmy:         datetime
+    datetime_ymd:         datetime
+    datetime_seconds_mdy: datetime
+    datetime_seconds_dmy: datetime
+    datetime_seconds_ymd: datetime
 
 enum_ordered:
   source_column: "Field Type"
   trigger_values: []
+
+# When a source type maps to boolean, record what strings represent true/false.
+boolean_values:
+  source_column: "Field Type"
+  mapping:
+    truefalse:
+      trueValues: ["True"]
+      falseValues: ["False"]
+    yesno:
+      trueValues: ["Yes"]
+      falseValues: ["No"]
 
 section:
   primary_column: "Form Name"
