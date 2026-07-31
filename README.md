@@ -77,6 +77,7 @@ Input file (any format)
           ▼
 ┌───────────────────┐
 │  vlmd_merge.py    │  Merges fixes, validates final document, writes VLMD JSON + CSV + metadata.yaml
+│                   │  → over 100MB? → vlmd_split.py splits output by section into multiple files
 │                   │  → valid + --dest-dir → copy to {dest-dir}/{appl_id}/{hdp_id}/vlmd/
 │                   │  → invalid → write to output/ for inspection, exit 2 (no copy)
 └───────────────────┘
@@ -206,6 +207,8 @@ work/HDP01258/
 | `--yes` / `-y` | off | Skip study confirmation prompt (for scripted/bot use) |
 | `--skip-llm` | off | Skip LLM fixup even if validation or converter flags errors |
 | `--no-detect` | off | Skip format detection (requires `--format`) |
+| `--max-file-size-mb N` | `100` | Split VLMD JSON/CSV output into multiple files if it would exceed this size (see [Large output files](#large-output-files-github-size-limit) below) |
+| `--split-by-form {ask,yes,no}` | `ask` | Split a multi-section dictionary into one form-folder per section, even when it's not oversized (see [Multiple forms](#multiple-forms-in-one-data-dictionary) below) |
 
 **Examples:**
 
@@ -366,6 +369,106 @@ python vlmd_merge.py \
   --format-name hbcd \
   --validate
 ```
+
+---
+
+## Large output files (GitHub size limit)
+
+GitHub rejects any push containing a file over 100MB. A pretty-printed VLMD JSON document for a
+large study (tens of thousands of variables) can exceed that limit even though the source CSV
+does not, because JSON with `indent=2` is far more verbose than the original data.
+
+Rather than invent a new convention, splitting mirrors how `heal-data-dictionaries` already
+represents studies with **multiple data dictionaries**: independent form folders under `vlmd/`,
+one per source instrument, each self-contained with its own `{name}.vlmd.json`, `.vlmd.csv`, and
+`metadata.yaml` (see e.g. `HDP00476_Whitesell_AIAN/vlmd/TG2_Adult/` and `vlmd/TG2_Youth/`, or
+`EPICC_NET/vlmd/`, which has 60 such folders — one per instrument). A VLMD document's `section`
+field (instrument/form/domain) plays exactly that same role, so an oversized dictionary is split
+into one form-folder per `section`, each under the size limit.
+
+`vlmd_merge.py` always writes the full combined document — `{stem}.vlmd.json` / `{stem}.vlmd.csv`
+in `vlmd/{stem}/` — as the complete local reference copy. It also checks the size of that document
+(via `vlmd_split.py`). If it's over the limit, it **additionally** writes one sibling folder per
+`section`, `vlmd/{stem}_{section}/`, each a fully self-contained VLMD output. A section is only
+broken up further (field-by-field, suffixed `_1`, `_2`, ...) in the rare case that it alone still
+exceeds the limit. Both the combined folder and the section form-folders are always present
+together locally in `output/`.
+
+Split output looks like:
+
+```
+output/HDP01258/vlmd/
+  HDP01258_HBCD_datadictionary/                    ← combined, full reference copy (kept locally only)
+    HDP01258_HBCD_datadictionary.vlmd.json
+    HDP01258_HBCD_datadictionary.vlmd.csv
+    metadata.yaml
+  HDP01258_HBCD_datadictionary_Demographics/        ← GitHub-safe, one folder per section
+    HDP01258_HBCD_datadictionary_Demographics.vlmd.json
+    HDP01258_HBCD_datadictionary_Demographics.vlmd.csv
+    metadata.yaml
+  HDP01258_HBCD_datadictionary_PROMIS/
+    ...
+```
+
+Each form-folder's `metadata.yaml` is a normal, independent metadata file — identical in shape to
+the combined folder's, just describing that one section's file:
+
+```yaml
+Project:
+  HDP_ID: HDP01258
+  APPL_ID: 10381046
+  ...
+HDP01258_HBCD_datadictionary_Demographics:
+  inputtype: hbcd
+  relative_input_filepath: ../../input/HBCD_datadictionary.csv
+  relative_output_filepath: ./HDP01258_HBCD_datadictionary_Demographics.vlmd.json
+```
+
+**`--dest-dir` copy behavior:** when `run_pipeline.py --dest-dir` is used to copy validated output
+into a clone of `heal-data-dictionaries` (the repo that actually gets pushed to GitHub), only the
+section form-folders are copied if a split occurred — the combined folder is skipped there, since
+copying it would reintroduce the exact oversized-file problem splitting exists to solve. The
+combined folder remains available locally in `output/` for reference or other tooling. When no
+split is needed, the single combined folder is copied to `--dest-dir` as before.
+
+The threshold is configurable with `--max-file-size-mb` (default `100`, GitHub's hard limit) on
+both `run_pipeline.py` and `vlmd_merge.py`. Pass a lower value (e.g. `95`) to leave a safety margin.
+
+---
+
+## Multiple forms in one data dictionary
+
+Splitting isn't only for oversized files. Many source files legitimately bundle multiple
+forms/instruments into one CSV — a REDCap data dictionary export, for example, always includes a
+`Form Name` column listing which instrument each variable belongs to, even though a REDCap project
+usually has several instruments. `heal-data-dictionaries` represents that as separate folders per
+instrument (e.g. `TG2_Adult/`, `TG2_Youth/`) even when neither file is anywhere near the size
+limit — it's about clean organization, not just GitHub's limit.
+
+When `run_pipeline.py` detects more than one distinct `section` value in a converted file, it
+prompts before writing output:
+
+```
+  Detected 4 forms/sections in this data dictionary: demographics, pain_assessment, medical_history, substance_use
+  Create a separate VLMD + metadata.yaml for each form, or combine into one? [combine/split] (default: combine):
+```
+
+Answering `split` uses the same per-section form-folder output described above — regardless of
+whether the combined file would actually exceed the size limit. Answering `combine` (or pressing
+Enter) keeps the current single-file/single-folder behavior; size-based splitting can still kick in
+separately afterward as a safety net if the combined output turns out to be oversized.
+
+Controlled by `--split-by-form`:
+
+| Value | Behavior |
+|-------|----------|
+| `ask` (default) | Prompts interactively when multiple sections are detected. Under `--yes` (scripted/bot use), defaults to `no` and prints a note instead of prompting. |
+| `yes` | Always splits into one form-folder per section when there's more than one — no prompt. |
+| `no` | Never splits by form (size-based splitting can still apply as a safety net). |
+
+For scripted/bot use, always pass `--split-by-form yes` or `--split-by-form no` explicitly rather
+than relying on the `ask` default — see `examples/run_examples.py`, which passes
+`split_by_form="no"` to stay fully non-interactive.
 
 ---
 
@@ -649,6 +752,7 @@ heal-vlmd-pipeline/
 ├── vlmd_lint.py                 Schema validation via healdata_utils
 ├── vlmd_fixup.py                LLM fixup for flagged rows (chunked, checkpointed)
 ├── vlmd_merge.py                Write VLMD JSON + CSV + metadata.yaml; gates copy on validation
+├── vlmd_split.py                Splits oversized output by section to stay under GitHub's 100MB limit
 ├── llm_client.py                Azure / Anthropic model registry
 │
 ├── formats/                     Format mapping specs (one YAML per format)
