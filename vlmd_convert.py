@@ -92,6 +92,29 @@ def _parse_comma_separated(raw: str) -> tuple[list[str], dict[str, str]]:
     return vals, {v: v for v in vals}
 
 
+def _parse_key_value_lines(raw: str) -> dict[str, str]:
+    """Parse 'VALUE=label' pairs, one per line (or pipe-separated), into a dict."""
+    if not raw or raw.strip() in ("", "nan"):
+        return {}
+    labels: dict[str, str] = {}
+    for line in raw.replace("|", "\n").splitlines():
+        if "=" not in line:
+            continue
+        val, lbl = line.split("=", 1)
+        val, lbl = val.strip(), lbl.strip()
+        if val and lbl:
+            labels[val] = lbl
+    return labels
+
+
+def _to_number(raw: str) -> Any:
+    try:
+        num = float(raw)
+    except ValueError:
+        return raw
+    return int(num) if num.is_integer() else num
+
+
 def parse_levels(raw: str, levels_spec: dict | None) -> tuple[list[str], dict[str, str]]:
     if not levels_spec or not raw or str(raw).strip().lower() in ("", "nan"):
         return [], {}
@@ -235,6 +258,32 @@ def row_to_vlmd_field(row: dict, spec: dict, resolved_cols: dict) -> dict:
             field.setdefault("constraints", {})["enum"] = enum_values
             field["enumLabels"] = enum_labels
 
+    # constraints.minimum / constraints.maximum
+    min_col = resolved_cols.get("minimum_column")
+    if min_col:
+        v = get_val(row, min_col)
+        if v:
+            field.setdefault("constraints", {})["minimum"] = _to_number(v)
+    max_col = resolved_cols.get("maximum_column")
+    if max_col:
+        v = get_val(row, max_col)
+        if v:
+            field.setdefault("constraints", {})["maximum"] = _to_number(v)
+
+    # value_labels_column → enumLabels (overrides identity labels from levels)
+    value_labels_col = resolved_cols.get("value_labels_column")
+    if value_labels_col:
+        raw_labels = get_val(row, value_labels_col)
+        parsed_labels = _parse_key_value_lines(raw_labels)
+        if parsed_labels:
+            field["enumLabels"] = {**field.get("enumLabels", {}), **parsed_labels}
+            enum_vals = field.get("constraints", {}).get("enum", [])
+            for val in parsed_labels:
+                if val not in enum_vals:
+                    enum_vals.append(val)
+            if enum_vals:
+                field.setdefault("constraints", {})["enum"] = enum_vals
+
     # relatedConcepts
     rel_concepts = []
     for rc_spec in spec.get("related_concepts", []):
@@ -340,6 +389,9 @@ def resolve_all_columns(spec: dict, df_columns: set[str]) -> dict:
     r["levels_column"] = resolve_column_spec(
         (spec.get("levels") or {}).get("source_column"), df_columns
     )
+    r["minimum_column"] = resolve_column_spec(spec.get("minimum_column"), df_columns)
+    r["maximum_column"] = resolve_column_spec(spec.get("maximum_column"), df_columns)
+    r["value_labels_column"] = resolve_column_spec(spec.get("value_labels_column"), df_columns)
     return r
 
 
