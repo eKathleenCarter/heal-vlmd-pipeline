@@ -12,6 +12,8 @@ from pathlib import Path
 
 import yaml
 
+from cli_ui import bold_red
+
 
 def merge_fixes(fields: list, fixes: list) -> list:
     """
@@ -234,7 +236,7 @@ def merge(converted_path: str, fixes_path: str | None, output_dir: str,
 
     if validate and not validation_passed:
         print(
-            "ERROR: Final VLMD document failed schema validation.\n"
+            bold_red("ERROR: Final VLMD document failed schema validation.", stream=sys.stderr) + "\n"
             f"       Output written to {out} for inspection.\n"
             "       Fix validation errors before copying to the final repository.",
             file=sys.stderr, flush=True,
