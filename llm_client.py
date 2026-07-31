@@ -4,11 +4,12 @@ Supports Azure AI Foundry (primary for HEAL) and Anthropic (alternative).
 """
 import json
 import os
+from pathlib import Path
 
 from dotenv import load_dotenv
-from openai import AzureOpenAI
+from openai import AzureOpenAI, OpenAI
 
-load_dotenv()
+load_dotenv(Path(__file__).parent / ".env")
 
 MODELS = {
     # ── Azure AI Foundry ─────────────────────────────────────────────────────
@@ -69,16 +70,30 @@ def _get_azure_client():
     global _azure_client
     if _azure_client is None:
         key = os.getenv("AZURE_OPENAI_API_KEY", "")
-        endpoint = os.getenv("AZURE_OPENAI_ENDPOINT", "")
-        version = os.getenv("AZURE_OPENAI_API_VERSION", "2024-12-01-preview")
+        endpoint = os.getenv("AZURE_OPENAI_ENDPOINT", "").rstrip("/")
         if not key or not endpoint:
             raise ValueError(
                 "AZURE_OPENAI_API_KEY and AZURE_OPENAI_ENDPOINT must be set in .env"
             )
-        _azure_client = AzureOpenAI(
-            api_key=key, azure_endpoint=endpoint,
-            api_version=version, timeout=120.0, max_retries=2,
-        )
+        # Endpoints ending in /v1 are the OpenAI-compatible path — use the
+        # standard OpenAI client with base_url (no api-version needed).
+        # Classic .openai.azure.com or .services.ai.azure.com endpoints use
+        # AzureOpenAI; strip any trailing /openai to avoid doubling the path.
+        if "/v1" in endpoint:
+            _azure_client = OpenAI(
+                api_key=key,
+                base_url=endpoint,
+                timeout=120.0,
+                max_retries=2,
+            )
+        else:
+            if endpoint.endswith("/openai"):
+                endpoint = endpoint[: -len("/openai")]
+            version = os.getenv("AZURE_OPENAI_API_VERSION", "2024-12-01-preview")
+            _azure_client = AzureOpenAI(
+                api_key=key, azure_endpoint=endpoint,
+                api_version=version, timeout=120.0, max_retries=2,
+            )
     return _azure_client
 
 
