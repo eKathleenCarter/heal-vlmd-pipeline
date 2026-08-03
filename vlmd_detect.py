@@ -322,6 +322,9 @@ def format_detection_message(result: dict) -> str:
             ("type", (proposed.get("type_mapping") or {}).get("source_column")),
             ("levels/choices", (proposed.get("levels") or {}).get("source_column")),
             ("section", (proposed.get("section") or {}).get("primary_column")),
+            ("minimum", proposed.get("minimum_column")),
+            ("maximum", proposed.get("maximum_column")),
+            ("value labels", proposed.get("value_labels_column")),
         ]
         for vlmd_prop, src_col in mapping_display:
             if src_col:

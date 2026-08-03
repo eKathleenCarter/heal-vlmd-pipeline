@@ -22,6 +22,16 @@ def merge_fixes(fields: list, fixes: list) -> list:
     return fields
 
 
+def _constraint_str(field: dict, key: str) -> str:
+    """Stringify a numeric constraint, preserving legitimate 0 values.
+
+    `value or ""` treats 0 as falsy and blanks it out — a real bug for
+    fields whose minimum is genuinely 0.
+    """
+    value = field.get("constraints", {}).get(key)
+    return "" if value is None else str(value)
+
+
 def fields_to_csv_rows(fields: list) -> list[dict]:
     rows = []
     for f in fields:
@@ -37,11 +47,11 @@ def fields_to_csv_rows(fields: list) -> list[dict]:
                 str(f.get("constraints", {}).get("required", "")).lower()
                 if f.get("constraints", {}).get("required") is not None else ""
             ),
-            "constraints.maxLength": str(f.get("constraints", {}).get("maxLength", "") or ""),
+            "constraints.maxLength": _constraint_str(f, "maxLength"),
             "constraints.enum": "|".join(f.get("constraints", {}).get("enum", [])),
             "constraints.pattern": f.get("constraints", {}).get("pattern", ""),
-            "constraints.maximum": str(f.get("constraints", {}).get("maximum", "") or ""),
-            "constraints.minimum": str(f.get("constraints", {}).get("minimum", "") or ""),
+            "constraints.maximum": _constraint_str(f, "maximum"),
+            "constraints.minimum": _constraint_str(f, "minimum"),
             "enumLabels": "|".join(
                 f"{k}={v}" for k, v in (f.get("enumLabels") or {}).items()
             ),

@@ -3,7 +3,7 @@ description: Custom format for APPL_ID 10154341
 _source:
   appl_id: '10154341'
   hdp_id: HDP00126
-  created: '2026-07-23'
+  created: '2026-08-03'
   source_file: HDP00126_DataDictionary_Completed_UPDATED.csv
   note: Auto-generated from interactive column mapping session
 input_reader: csv
@@ -43,6 +43,9 @@ detection:
     supporting:
     - datatype
     - allowed values
+    - minimum
+    - maximum
+    - information about values
   confidence_threshold: 0.6
   file_extensions: []
   source_study_appl_id: '10154341'

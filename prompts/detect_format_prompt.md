@@ -15,6 +15,8 @@ Optional but important:
 - `constraints.enum` — allowed values for categorical variables (list of strings)
 - `enumLabels` — dict mapping enum values to human-readable labels
 - `enumOrdered` — true if categorical variable has an ordered relationship
+- `constraints.minimum` — minimum allowed/observed value for numeric variables
+- `constraints.maximum` — maximum allowed/observed value for numeric variables
 - `relatedConcepts` — links to documentation or ontology terms
 - `custom` — catch-all for format-specific metadata
 
@@ -27,9 +29,21 @@ Given the column names and sample rows from an unknown data dictionary file:
 3. Identify which column, if any, indicates data type
 4. Identify which column, if any, contains categorical choices/levels
 5. Identify which column, if any, groups variables into sections
-6. Suggest data type mapping (source type values → VLMD type strings)
-7. Suggest the format of the levels column (json_array, pipe_separated, comma_separated, or other)
-8. List remaining columns that should go into `custom`
+6. Identify which column, if any, gives the minimum allowed/valid value for
+   numeric variables (`minimum_column`) — look for headers like `minimum`,
+   `min`, `lower_bound`, `valid_min`, `range_low`
+7. Identify which column, if any, gives the maximum allowed/valid value for
+   numeric variables (`maximum_column`) — look for headers like `maximum`,
+   `max`, `upper_bound`, `valid_max`, `range_high`
+8. Identify which column, if any, holds free-text notes/definitions for
+   specific values (`value_labels_column`) — distinct from the categorical
+   choices/levels column; typically prose like `1=Yes; 2=No` or per-value
+   annotations, not a structured list of all valid codes
+9. Suggest data type mapping (source type values → VLMD type strings)
+10. Suggest the format of the levels column (json_array, pipe_separated, comma_separated, or other)
+11. List remaining columns that should go into `custom` — do NOT include any
+    column already mapped above (name, description, title, type, levels,
+    section, minimum, maximum, value_labels)
 
 ## Output format
 
@@ -62,6 +76,9 @@ Return a single JSON object:
       "pair_separator": ",",
       "choice_separator": "|"
     },
+    "minimum_column": "ColumnName or null",
+    "maximum_column": "ColumnName or null",
+    "value_labels_column": "ColumnName or null",
     "related_concepts": [],
     "custom_columns": ["col1", "col2"],
     "capture_unmapped_as_custom": true
