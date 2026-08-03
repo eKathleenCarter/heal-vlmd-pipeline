@@ -45,6 +45,16 @@ content. Replace it entirely following the same rules as `missing_description`.
 
 ---
 
+### `encoding_corruption`
+`description` or `title` still contains an unrecoverable replacement character (�) after
+automatic mojibake/smart-quote repair — the original bytes were already lost before this
+pipeline ever saw the file, so the exact original text cannot be reconstructed character
+for character. Write a clean replacement using whatever the surrounding text and other
+`source_row` columns tell you about intended meaning, following the same rules as
+`missing_description`. Do not attempt to guess at or reproduce the corrupted character(s).
+
+---
+
 ### `missing_type`
 Infer the VLMD type from available source columns:
 

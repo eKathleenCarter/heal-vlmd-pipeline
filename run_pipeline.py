@@ -17,6 +17,8 @@ from pathlib import Path
 
 import yaml
 
+from cli_ui import bold, bold_yellow, print_action_required
+
 PIPELINE_DIR = Path(__file__).parent
 WORK_DIR = PIPELINE_DIR / "work"
 OUTPUT_DIR = PIPELINE_DIR / "output"
@@ -31,6 +33,163 @@ def _derive_name(input_file: str) -> str:
     return re.sub(r"[\s]+", "_", Path(input_file).stem)
 
 
+DESCRIPTION_REVIEW_ISSUE = "description_too_short"
+_SUGGESTION_PRIORITY = {"flag_for_human": 0, "send_to_llm": 1, "leave_as_is": 2}
+
+
+def _apply_description_review_gate(
+    convert_lint_records: list,
+    convert_lint_path: str,
+    work_subdir: Path,
+    decisions_path: str | None,
+    yes: bool,
+    model: str,
+) -> tuple[list, int | None]:
+    """Short/placeholder descriptions are flagged by the converter, but whether
+    the LLM should rewrite them is a judgment call that needs context a blind
+    heuristic can't see — a foreign-language word ("todo" = "all" in Spanish)
+    can look exactly like an English placeholder, and a legitimate short field
+    label ("Header") can look exactly like a truncated fragment.
+
+    An LLM triage pass classifies each candidate WITH source-row context
+    (table_label, domain, ...) and pre-fills a suggested decision + one-line
+    justification. That is only ever a suggestion: a human still has to supply
+    a decisions file (--description-review-decisions) — which can simply be
+    this same file, reviewed and edited — before anything is sent to the real
+    fixup step.
+
+    Returns (possibly-filtered lint records, exit_code). exit_code is None to
+    continue the pipeline, or an int to stop here and wait for the decisions file.
+    """
+    candidates = [r for r in convert_lint_records if DESCRIPTION_REVIEW_ISSUE in r["issues"]]
+    if not candidates:
+        return convert_lint_records, None
+
+    decisions: dict[str, dict] = {}
+    if decisions_path and Path(decisions_path).exists():
+        for d in json.loads(Path(decisions_path).read_text(encoding="utf-8")):
+            if d.get("decision") in ("send_to_llm", "leave_as_is"):
+                decisions[d["name"]] = {
+                    "decision": d["decision"],
+                    "justification": d.get("justification", ""),
+                }
+
+    undecided = [r for r in candidates if r["name"] not in decisions]
+
+    if undecided and yes:
+        # Scripted/non-interactive use: default to the non-destructive choice
+        # rather than spending LLM calls on triage no one will review.
+        for r in undecided:
+            decisions[r["name"]] = {"decision": "leave_as_is", "justification": "--yes: not reviewed"}
+        print(
+            f"  NOTE: --yes set — defaulting {len(undecided)} short/placeholder "
+            "description(s) to 'leave_as_is' (no LLM rewrite, no triage run). Pass "
+            "--description-review-decisions to control this explicitly.",
+            flush=True,
+        )
+        undecided = []
+
+    review_path = work_subdir / "vlmd_description_review.json"
+
+    if undecided:
+        from vlmd_description_triage import triage
+
+        print(f"\n  Running LLM triage on {len(undecided)} short/placeholder description(s) "
+              "to suggest which need a rewrite ...", flush=True)
+        triage_checkpoint = str(work_subdir / "vlmd_description_triage.checkpoint.json")
+        suggestions = triage(undecided, model, checkpoint_path=triage_checkpoint)
+
+        # flag_for_human sorts first (needs the most attention), then send_to_llm,
+        # then leave_as_is — and flag_for_human's "decision" is left blank rather
+        # than pre-filled, since there is no confident suggestion to accept or reject.
+        scored: list[tuple[int, dict]] = []
+        counts = {"flag_for_human": 0, "send_to_llm": 0, "leave_as_is": 0}
+        for r in candidates:
+            if r["name"] in decisions:
+                d = decisions[r["name"]]
+                suggested = d["decision"]
+                justification = d["justification"]
+            else:
+                s = suggestions.get(r["name"], {})
+                suggested = s.get("decision") or "flag_for_human"
+                justification = s.get("justification", "")
+                counts[suggested] = counts.get(suggested, 0) + 1
+            entry = {
+                "name": r["name"],
+                "description": r["vlmd_field_draft"].get("description", ""),
+                "section": r["vlmd_field_draft"].get("section", ""),
+                "decision": "" if suggested == "flag_for_human" else suggested,
+                "justification": justification,
+            }
+            scored.append((_SUGGESTION_PRIORITY.get(suggested, 0), entry))
+
+        scored.sort(key=lambda pair: pair[0])
+        review_payload = [entry for _, entry in scored]
+        review_path.write_text(
+            json.dumps(review_payload, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+
+        print(
+            f"\n  {len(undecided)} field(s) triaged — "
+            f"{counts['flag_for_human']} flagged for human input, "
+            f"{counts['send_to_llm']} suggested send_to_llm, "
+            f"{counts['leave_as_is']} suggested leave_as_is.",
+            flush=True,
+        )
+
+        rerun_cmd = f"--description-review-decisions {review_path}"
+        print_action_required(
+            "human review needed before LLM fixup",
+            [
+                "Open " + bold(str(review_path)) + "\n"
+                '(flag_for_human entries are listed first, with "decision" left blank —\n'
+                "everything else is pre-filled with a suggestion to check)",
+                'Fill in every blank "decision" with "send_to_llm" or "leave_as_is";\n'
+                "edit any pre-filled suggestion you disagree with too",
+                "Re-run with:\n" + bold(rerun_cmd),
+            ],
+        )
+        return convert_lint_records, 3
+
+    # All decided — record the final decisions and strip declined ones from the lint report
+    scored = [
+        (
+            _SUGGESTION_PRIORITY.get(decisions[r["name"]]["decision"], 0),
+            {
+                "name": r["name"],
+                "description": r["vlmd_field_draft"].get("description", ""),
+                "section": r["vlmd_field_draft"].get("section", ""),
+                "decision": decisions[r["name"]]["decision"],
+                "justification": decisions[r["name"]]["justification"],
+            },
+        )
+        for r in candidates
+    ]
+    scored.sort(key=lambda pair: pair[0])
+    review_payload = [entry for _, entry in scored]
+    review_path.write_text(
+        json.dumps(review_payload, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+
+    for r in convert_lint_records:
+        if decisions.get(r["name"], {}).get("decision") == "leave_as_is" and DESCRIPTION_REVIEW_ISSUE in r["issues"]:
+            r["issues"] = [i for i in r["issues"] if i != DESCRIPTION_REVIEW_ISSUE]
+
+    filtered = [r for r in convert_lint_records if r["issues"]]
+    Path(convert_lint_path).write_text(
+        json.dumps(filtered, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+
+    kept = sum(1 for r in candidates if decisions[r["name"]]["decision"] == "send_to_llm")
+    dropped = sum(1 for r in candidates if decisions[r["name"]]["decision"] == "leave_as_is")
+    print(
+        f"  Description review: {kept} sent to LLM, {dropped} left as-is "
+        f"(decisions in {review_path})",
+        flush=True,
+    )
+    return filtered, None
+
+
 def run(
     input_file: str,
     format_yaml: str | None,
@@ -43,8 +202,9 @@ def run(
     skip_llm: bool = False,
     no_detect: bool = False,
     output_dir: Path = OUTPUT_DIR,
-    yes: bool = False,
+    no_confirm: bool = False,
     dest_dir: Path | None = None,
+    description_review_decisions: str | None = None,
 ) -> int:
     # ── Derive file stem ──────────────────────────────────────────────────────
     file_name = name or _derive_name(input_file)
@@ -61,6 +221,23 @@ def run(
     input_copy_dir = output_dir / "input"
     input_copy_dir.mkdir(parents=True, exist_ok=True)
 
+    # ── Step 0a: PDF pre-extraction ──────────────────────────────────────────
+    # If the input is a PDF, extract variables to an intermediate CSV first,
+    # then continue with the normal detect → convert → fixup pipeline on that CSV.
+    if Path(input_file).suffix.lower() == ".pdf":
+        _banner("Step 0a: PDF extraction")
+        from vlmd_pdf import extract as pdf_extract
+
+        extracted_csv = str(work_subdir / f"{Path(input_file).stem}_extracted.csv")
+        rc = pdf_extract(input_file, extracted_csv, model_key=model)
+        if rc != 0:
+            return rc
+        print(f"  PDF extraction complete — continuing pipeline on: {extracted_csv}", flush=True)
+        input_file = extracted_csv
+        # The extracted CSV always uses generic-csv columns — skip format detection.
+        if not format_yaml:
+            format_yaml = str(PIPELINE_DIR / "formats" / "generic-csv.yaml")
+
     # ── Step 0: HEAL platform lookup ─────────────────────────────────────────
     if hdp_id:
         _banner("Step 0: HEAL platform lookup")
@@ -73,8 +250,8 @@ def run(
             if title == "HEAL Study Data Dictionary" and study_info.get("study_name"):
                 title = study_info["study_name"]
 
-        if study_info and not confirm_study(yes=yes):
-            print("  Aborted.", flush=True)
+        if study_info and not confirm_study(no_confirm=no_confirm):
+            print(f"\n  {bold('Aborted')} — study not confirmed.", flush=True)
             return 1
 
     print("=" * 44, flush=True)
@@ -108,12 +285,19 @@ def run(
 
         if detection["format_name"] is None:
             print(format_detection_message(detection), flush=True)
-            print(
-                f"\n  Detection result saved to {detection_path}\n"
-                f"  Run vlmd_interview.py to save a mapping, then re-run with:\n"
-                f"    python run_pipeline.py --input '{input_file}' "
-                f"--format formats/{appl_id}.yaml --no-detect ...",
-                flush=True,
+            rerun_cmd = (
+                f"python run_pipeline.py --input '{input_file}' "
+                f"--format formats/{appl_id}.yaml --no-detect ..."
+            )
+            print_action_required(
+                "unrecognized format — a mapping needs review before conversion",
+                [
+                    "Review the proposed mapping above (full detection JSON:\n"
+                    + bold(str(detection_path)) + ")",
+                    "Confirm or correct it through conversation, then save it with\n"
+                    "vlmd_interview.py save --applid ... --mapping-json '...'",
+                    "Re-run with:\n" + bold(rerun_cmd),
+                ],
             )
             return 1
 
@@ -142,12 +326,13 @@ def run(
     # Load and report converter lint flags
     convert_lint_records = json.loads(Path(convert_lint_path).read_text(encoding="utf-8"))
     if convert_lint_records:
-        print(f"\n  {len(convert_lint_records)} field(s) flagged for LLM review:", flush=True)
-        for rec in convert_lint_records[:10]:
-            issues_str = ", ".join(rec["issues"])
-            print(f"    [{rec['name']}]  issues: {issues_str}", flush=True)
-        if len(convert_lint_records) > 10:
-            print(f"    ... and {len(convert_lint_records) - 10} more (see {convert_lint_path})", flush=True)
+        issue_counts: dict[str, int] = {}
+        for rec in convert_lint_records:
+            for issue in rec["issues"]:
+                issue_counts[issue] = issue_counts.get(issue, 0) + 1
+        breakdown = ", ".join(f"{n} {issue}" for issue, n in sorted(issue_counts.items()))
+        print(f"\n  {len(convert_lint_records)} field(s) flagged for LLM review "
+              f"({breakdown}) — see {convert_lint_path}", flush=True)
 
     # ── Step 3: Validate ──────────────────────────────────────────────────────
     _banner("Step 3: Validate")
@@ -161,6 +346,15 @@ def run(
     needs_fixup = (lint_exit != 0 or bool(convert_lint_records))
     fixes_path = None
     cleanup_log_path = str(work_subdir / "vlmd_llm_cleanup.json")
+
+    if needs_fixup and not skip_llm:
+        convert_lint_records, gate_exit = _apply_description_review_gate(
+            convert_lint_records, convert_lint_path, work_subdir,
+            description_review_decisions, yes, model,
+        )
+        if gate_exit is not None:
+            return gate_exit
+        needs_fixup = (lint_exit != 0 or bool(convert_lint_records))
 
     if needs_fixup and not skip_llm:
         _banner(f"Step 4: LLM fixup  (model: {model})")
@@ -277,7 +471,7 @@ Examples:
     --format formats/hbcd.yaml --name HBCD_datadictionary
 
   # Non-interactive / scripted use
-  python run_pipeline.py --input data_dict.csv --hdp-id HDP01258 --yes
+  python run_pipeline.py --input data_dict.csv --hdp-id HDP01258 --no-confirm
 
   # Skip LLM (deterministic only)
   python run_pipeline.py --input data_dict.csv --hdp-id HDP01258 --skip-llm
@@ -305,12 +499,18 @@ Examples:
     ap.add_argument("--skip-llm", action="store_true", help="Skip LLM fixup step")
     ap.add_argument("--no-detect", action="store_true",
                     help="Skip format detection (requires --format)")
-    ap.add_argument("--yes", "-y", action="store_true",
-                    help="Skip study confirmation prompt (for scripted/bot use)")
+    ap.add_argument("--no-confirm", action="store_true",
+                    help="Skip the study confirmation prompt (for scripted/non-interactive use)")
     ap.add_argument("--dest-dir", default=None,
                     help="Root of destination repository (e.g. heal-data-dictionaries/data-dictionaries). "
                          "Files are copied to {dest-dir}/{hdp-id}/vlmd/{stem}/ and {dest-dir}/{hdp-id}/input/ "
                          "after validation passes.")
+    ap.add_argument("--description-review-decisions", default=None,
+                    help="Path to a decisions JSON (from a prior run's "
+                         "work/{hdp-id}/vlmd_description_review.json) with each entry's "
+                         "\"decision\" set to send_to_llm or leave_as_is. Without it, a run "
+                         "with undecided short/placeholder descriptions stops and writes "
+                         "that file for review (exit code 3).")
 
     args = ap.parse_args()
 
@@ -332,8 +532,9 @@ Examples:
         skip_llm=args.skip_llm,
         no_detect=args.no_detect,
         output_dir=output_dir,
-        yes=args.yes,
+        no_confirm=args.no_confirm,
         dest_dir=Path(args.dest_dir) if args.dest_dir else None,
+        description_review_decisions=args.description_review_decisions,
     ))
 
 

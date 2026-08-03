@@ -122,7 +122,7 @@ Or with `uv`:
 uv pip install -r requirements.txt
 ```
 
-`requirements.txt` includes: `pandas`, `healdata_utils`, `openai`, `anthropic`, `python-dotenv`, `tiktoken`, `pyyaml`.
+`requirements.txt` includes: `pandas`, `healdata_utils`, `openai`, `anthropic`, `python-dotenv`, `tiktoken`, `pyyaml`, `ftfy`.
 
 For Stata (`.dta`) file support, also install:
 
@@ -206,6 +206,7 @@ work/HDP01258/
 | `--yes` / `-y` | off | Skip study confirmation prompt (for scripted/bot use) |
 | `--skip-llm` | off | Skip LLM fixup even if validation or converter flags errors |
 | `--no-detect` | off | Skip format detection (requires `--format`) |
+| `--description-review-decisions PATH` | _(none)_ | Decisions file for short/placeholder descriptions (see below) |
 
 **Examples:**
 
@@ -242,6 +243,62 @@ python run_pipeline.py \
 # Fastest — no LLM, deterministic only
 python run_pipeline.py --input file.csv --hdp-id HDP01258 --skip-llm
 ```
+
+---
+
+### Encoding fixes: local, automatic, no LLM
+
+Mojibake (example: double-encoded UTF-8/Latin-1, e.g. `CafÃ©` → `Café`) and smart-quote/dash
+artifacts in `description`, `title`, and `enumLabels` are fixed automatically by
+[`ftfy`](https://pypi.org/project/ftfy/) during conversion.
+Every fix is logged: `vlmd_convert.py` writes `work/{hdp-id}/vlmd_encoding_fixes.json`
+(each entry has `field`, `key`, `before`, `after`) and prints a one-line summary count
+so nothing changes silently.
+
+If a character was already unrecoverably lost before the file reached this pipeline
+(example: an actual replacement character, `�`, that `ftfy` can't repair), it's left as-is and
+flagged with a new `encoding_corruption` issue — that one *does* go through the normal
+LLM fixup step (with instructions not to guess at the lost character, just write a
+clean description from context), since real content is missing and needs to be
+supplied, not just cleaned up.
+
+---
+
+### Short/placeholder descriptions: LLM triage proposes, a human approves
+
+The converter flags any description that's a known placeholder (`"n/a"`, `"none"`, `"todo"`, ...) or that's suspiciously 
+short (word-count threshold set by `DESCRIPTION_REVIEW_MAX_WORDS` in `vlmd_convert.py`). Whether a flagged description 
+is actually broken needs context a heuristic can't see: `"Header"` or `"Net ID#"` can be a perfectly legitimate short 
+label, and a word that looks like an English placeholder can be a correctly-translated word in another language the 
+study uses (`"todo"` = "all" in a Spanish-language instrument table, not a to-do marker). So instead of guessing, or 
+asking a human to judge bare short strings out of context, an LLM triage pass classifies each candidate into one of three 
+buckets using its source-row context:
+
+- `send_to_llm` — genuinely empty-in-spirit, truncated, or an unfilled placeholder; no real content to preserve
+- `leave_as_is` — short but already meaningful given context
+- `flag_for_human` — real source content that's just terse/technical jargon (e.g. `"relResdiff1"`); the model won't guess at what it means, a human decides
+
+
+When it's done:
+
+1. `work/{hdp-id}/vlmd_description_review.json` is written — one entry per flagged field with `name`, `description`, 
+`section`, `decision`, and `justification`. Entries are ordered `flag_for_human` first (these need the most attention), 
+then `send_to_llm`, then `leave_as_is`. `flag_for_human` entries have `"decision": ""`
+2. The pipeline prints an "ACTION REQUIRED" block with the counts and the exact next steps, and exits with code `3`.
+3. Fill in every blank `"decision"` with `send_to_llm` or `leave_as_is`; edit any pre-filled suggestion you disagree with.
+4. Re-run with `--description-review-decisions work/{hdp-id}/vlmd_description_review.json`. Fields marked `send_to_llm` 
+go through the normal fixup step; `leave_as_is` fields are dropped from that issue and left untouched (other issues on 
+the same field, e.g. `missing_type`, still get fixed).
+
+`--yes` (scripted/bot use) skips triage and the stop-and-wait entirely: any undecided short description defaults 
+to `leave_as_is` so automation never blocks or spends LLM calls on triage no one will review. Fields with a genuinely 
+empty description (`missing_description`) are never gated — there's nothing ambiguous about an empty string, so those 
+always go straight to the LLM.
+
+Triage suggestions are not infallible — treat the file as a draft, not a verdict. The same field, given the same context, 
+can come back with a different suggestion on separate runs (LLM non-determinism), and a plausible-sounding justification 
+can still be wrong (e.g. a justification arguing a word should be left as-is while the `decision` field says `send_to_llm`, 
+or vice versa). 
 
 ---
 
@@ -392,9 +449,13 @@ description: Human-readable description
 
 input_reader: csv          # csv (default) or stata
 
-# Column mapping — string for exact name, list to try candidates in order
+# Column mapping — string for exact name, list to try candidates in order,
+# or {combine: [...], separator: ...} to join multiple columns into one value
 name_column: "Variable Name"
 description_column: "Description"
+# description_column:
+#   combine: [Description, Header]
+#   separator: " | "        # default: " | "
 title_column: null         # omit if no source column
 
 type_mapping:
@@ -648,8 +709,10 @@ heal-vlmd-pipeline/
 ├── vlmd_interview.py            Save unknown format as formats/{applid}.yaml
 ├── vlmd_lint.py                 Schema validation via healdata_utils
 ├── vlmd_fixup.py                LLM fixup for flagged rows (chunked, checkpointed)
+├── vlmd_description_triage.py   LLM triage for short/placeholder descriptions (proposes, doesn't decide)
 ├── vlmd_merge.py                Write VLMD JSON + CSV + metadata.yaml; gates copy on validation
 ├── llm_client.py                Azure / Anthropic model registry
+├── cli_ui.py                    Shared terminal styling: progress bars, ACTION REQUIRED blocks
 │
 ├── formats/                     Format mapping specs (one YAML per format)
 │   ├── hbcd.yaml
@@ -663,7 +726,8 @@ heal-vlmd-pipeline/
 │   ├── detect_format_prompt.md
 │   ├── hbcd_fixup_prompt.md
 │   ├── redcap_fixup_prompt.md
-│   └── generic_fixup_prompt.md
+│   ├── generic_fixup_prompt.md
+│   └── description_triage_prompt.md
 │
 ├── examples/                    Sample inputs and end-to-end demo
 │   ├── hbcd_sample.csv          Synthetic HBCD dictionary (8 rows, 25 columns)

@@ -245,6 +245,10 @@ def detect(file_path: str,
     print("  No strong rule-based match — calling LLM for inference ...", flush=True)
     llm_result = llm_detect(columns, sample_rows, model_key=model_key)
 
+    if not isinstance(llm_result, dict):
+        print(f"  WARNING: LLM returned unexpected type {type(llm_result).__name__} — treating as no match", flush=True)
+        llm_result = {}
+
     proposed = llm_result.get("proposed_mapping", {})
     guessed_format = llm_result.get("format_guess")
 
