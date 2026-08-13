@@ -8,3 +8,4 @@ pyyaml>=6.0
 imagehash>=4.3
 ftfy>=6.3
 pdfplumber>=0.10
+openpyxl>=3.1

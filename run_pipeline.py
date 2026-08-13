@@ -205,6 +205,7 @@ def run(
     no_confirm: bool = False,
     dest_dir: Path | None = None,
     description_review_decisions: str | None = None,
+    sheet: str | None = None,
 ) -> int:
     # ── Derive file stem ──────────────────────────────────────────────────────
     file_name = name or _derive_name(input_file)
@@ -237,6 +238,22 @@ def run(
         # The extracted CSV always uses generic-csv columns — skip format detection.
         if not format_yaml:
             format_yaml = str(PIPELINE_DIR / "formats" / "generic-csv.yaml")
+
+    # ── Step 0b: Excel pre-extraction ─────────────────────────────────────────
+    # If the input is an Excel workbook, convert the relevant sheet to an
+    # intermediate CSV first, then continue with the normal pipeline on that CSV.
+    # Unlike PDF, the resulting CSV can be any known format (REDCap, CDE-style,
+    # etc.), so format detection still runs normally on it.
+    elif Path(input_file).suffix.lower() in (".xlsx", ".xls"):
+        _banner("Step 0b: Excel extraction")
+        from vlmd_excel import extract as excel_extract
+
+        extracted_csv = str(work_subdir / f"{Path(input_file).stem}_extracted.csv")
+        rc = excel_extract(input_file, extracted_csv, sheet_name=sheet)
+        if rc != 0:
+            return rc
+        print(f"  Excel extraction complete — continuing pipeline on: {extracted_csv}", flush=True)
+        input_file = extracted_csv
 
     # ── Step 0: HEAL platform lookup ─────────────────────────────────────────
     if hdp_id:
@@ -350,7 +367,7 @@ def run(
     if needs_fixup and not skip_llm:
         convert_lint_records, gate_exit = _apply_description_review_gate(
             convert_lint_records, convert_lint_path, work_subdir,
-            description_review_decisions, yes, model,
+            description_review_decisions, no_confirm, model,
         )
         if gate_exit is not None:
             return gate_exit
@@ -511,6 +528,9 @@ Examples:
                          "\"decision\" set to send_to_llm or leave_as_is. Without it, a run "
                          "with undecided short/placeholder descriptions stops and writes "
                          "that file for review (exit code 3).")
+    ap.add_argument("--sheet", default=None,
+                    help="Sheet name to use for .xlsx/.xls input (default: auto-picks the "
+                         "sheet with the most cells). Only relevant for Excel input.")
 
     args = ap.parse_args()
 
@@ -535,6 +555,7 @@ Examples:
         no_confirm=args.no_confirm,
         dest_dir=Path(args.dest_dir) if args.dest_dir else None,
         description_review_decisions=args.description_review_decisions,
+        sheet=args.sheet,
     ))
 
 
