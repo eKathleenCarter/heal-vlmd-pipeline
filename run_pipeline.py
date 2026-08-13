@@ -301,7 +301,7 @@ def run(
         )
 
         if detection["format_name"] is None:
-            print(format_detection_message(detection), flush=True)
+            print(format_detection_message(detection, interactive=False), flush=True)
             rerun_cmd = (
                 f"python run_pipeline.py --input '{input_file}' "
                 f"--format formats/{appl_id}.yaml --no-detect ..."

@@ -245,6 +245,11 @@ def detect(file_path: str,
     print("  No strong rule-based match — calling LLM for inference ...", flush=True)
     llm_result = llm_detect(columns, sample_rows, model_key=model_key)
 
+    # Models occasionally wrap the requested object in a single-element array —
+    # unwrap rather than discard a perfectly usable mapping proposal.
+    if isinstance(llm_result, list) and len(llm_result) == 1 and isinstance(llm_result[0], dict):
+        llm_result = llm_result[0]
+
     if not isinstance(llm_result, dict):
         print(f"  WARNING: LLM returned unexpected type {type(llm_result).__name__} — treating as no match", flush=True)
         llm_result = {}
@@ -290,8 +295,15 @@ def _build_rule_reasoning(name: str, spec: dict, col_set: set, score: float) -> 
 
 # ── display helpers (used by skill) ──────────────────────────────────────────
 
-def format_detection_message(result: dict) -> str:
-    """Human-readable summary for the Claude Code skill to show the user."""
+def format_detection_message(result: dict, interactive: bool = True) -> str:
+    """Human-readable summary of a detection result.
+
+    `interactive=True` (the default) appends a closing question aimed at a
+    live conversational consumer (e.g. a chat-driven skill) that can actually
+    collect an answer. Non-interactive callers — run_pipeline.py's batch CLI,
+    which has no way to receive a reply to a question it prints — should pass
+    `interactive=False` to get just the factual summary.
+    """
     lines = []
     fmt = result["format_name"]
     conf = result["confidence"]
@@ -304,7 +316,8 @@ def format_detection_message(result: dict) -> str:
         )
         lines.append(f"\n{result['reasoning']}")
         lines.append(f"\n**{result['row_count']:,} rows** · {result['column_count']} columns")
-        lines.append("\nShould I proceed with the VLMD conversion?")
+        if interactive:
+            lines.append("\nShould I proceed with the VLMD conversion?")
 
     elif fmt and result.get("ambiguous"):
         lines.append(f"This looks most like **{fmt.upper()} format** but I'm not certain.")
@@ -313,12 +326,19 @@ def format_detection_message(result: dict) -> str:
         lines.append("\nTop candidates:")
         for n, s in top_scores:
             lines.append(f"  - {n}: {s:.0%}")
-        lines.append("\nIs this the right format, or is it something else?")
+        if interactive:
+            lines.append("\nIs this the right format, or is it something else?")
 
     elif method == "llm":
         proposed = result.get("proposed_mapping", {})
         explanations = result.get("column_explanations", {})
-        lines.append("I don't recognize this format. Here's what I found:\n")
+        if proposed:
+            lines.append("I don't recognize this format. Here's what I found:\n")
+        else:
+            lines.append(
+                "I don't recognize this format, and the AI's attempt to propose a "
+                "mapping failed (malformed response) — no mapping is available.\n"
+            )
         mapping_display = [
             ("name", proposed.get("name_column")),
             ("description", proposed.get("description_column")),
@@ -336,16 +356,18 @@ def format_detection_message(result: dict) -> str:
         if custom:
             lines.append(f"  - Remaining columns → `custom`: {custom}")
 
-        lines.append(
-            "\nDoes this look right? Tell me what to change, or say **'looks good'** "
-            "to save this mapping and start the conversion.\n"
-            "(I'll save this as a reusable format for your study.)"
-        )
+        if interactive:
+            lines.append(
+                "\nDoes this look right? Tell me what to change, or say **'looks good'** "
+                "to save this mapping and start the conversion.\n"
+                "(I'll save this as a reusable format for your study.)"
+            )
 
     else:
         lines.append("I couldn't identify the format of this file.")
         lines.append(f"\nColumns found: {result['columns']}")
-        lines.append("\nWhat format is this? Or tell me how to map these columns to VLMD.")
+        if interactive:
+            lines.append("\nWhat format is this? Or tell me how to map these columns to VLMD.")
 
     return "\n".join(lines)
 
