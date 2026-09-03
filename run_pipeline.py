@@ -302,6 +302,22 @@ def run(
 
         if detection["format_name"] is None:
             print(format_detection_message(detection, interactive=False), flush=True)
+            
+            mapping_path = work_subdir / "vlmd_proposed_mapping.json"
+            mapping_path.write_text(
+                json.dumps(detection.get("proposed_mapping") or {},
+                          indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            columns_arg = ",".join(detection.get("columns", []))
+            save_cmd = (
+                f"python vlmd_interview.py save \\\n"
+                f"  --applid '{appl_id}' \\\n"
+                f"  --hdp-id '{hdp_id}' \\\n"
+                f"  --source-file '{Path(input_file).name}' \\\n"
+                f"  --columns '{columns_arg}' \\\n"
+                f"  --mapping-json \"$(cat {mapping_path})\""
+            )
             rerun_cmd = (
                 f"python run_pipeline.py --input '{input_file}' "
                 f"--format formats/{appl_id}.yaml --no-detect ..."
@@ -309,10 +325,10 @@ def run(
             print_action_required(
                 "unrecognized format — a mapping needs review before conversion",
                 [
-                    "Review the proposed mapping above (full detection JSON:\n"
+                    "Review the proposed mapping (full detection JSON:\n"
                     + bold(str(detection_path)) + ")",
-                    "Confirm or correct it through conversation, then save it with\n"
-                    "vlmd_interview.py save --applid ... --mapping-json '...'",
+                    "Correct it if needed by editing\n" + bold(str(mapping_path)),
+                    "Save the mapping:\n" + bold(save_cmd),
                     "Re-run with:\n" + bold(rerun_cmd),
                 ],
             )
@@ -518,6 +534,10 @@ Examples:
                     help="Skip format detection (requires --format)")
     ap.add_argument("--no-confirm", action="store_true",
                     help="Skip the study confirmation prompt (for scripted/non-interactive use)")
+    ap.add_argument("--yes", action="store_true",
+                    help="Non-interactive: auto-decide undecided short/placeholder descriptions "
+                         "as 'leave_as_is' instead of stopping for human review "
+                         "(see --description-review-decisions)")
     ap.add_argument("--dest-dir", default=None,
                     help="Root of destination repository (e.g. heal-data-dictionaries/data-dictionaries). "
                          "Files are copied to {dest-dir}/{hdp-id}/vlmd/{stem}/ and {dest-dir}/{hdp-id}/input/ "
