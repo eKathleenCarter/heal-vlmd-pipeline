@@ -347,7 +347,11 @@ When `format_name` is null and `proposed_mapping` is set, the file is unknown �
 
 #### 2. Save a custom format mapping (unknown files)
 
-After a user confirms a column mapping through conversation, save it:
+When `run_pipeline.py` hits an unrecognized format, it writes the LLM's proposed
+mapping to `work/{stem}/vlmd_proposed_mapping.json` and prints a ready-to-run
+`vlmd_interview.py save` command in its `ACTION REQUIRED` block — copy/paste it
+as-is. After a user confirms the mapping through conversation (editing the JSON
+file directly if it needs correcting), run that command, e.g.:
 
 ```bash
 python vlmd_interview.py save \
@@ -355,23 +359,35 @@ python vlmd_interview.py save \
   --hdp-id      "HDP01234" \
   --source-file "my_dict.csv" \
   --columns     "VarName,QuestionText,DataType,Choices,Category" \
-  --mapping-json '{
-    "name_column": "VarName",
-    "description_column": "QuestionText",
-    "type_mapping": {
-      "source_column": "DataType",
-      "lookup": {"text": "string", "numeric": "number", "date": "date"}
-    },
-    "section": {"primary_column": "Category"},
-    "levels": {
-      "source_column": "Choices",
-      "format": "pipe_separated",
-      "pair_separator": ",",
-      "choice_separator": "|"
-    },
-    "custom_columns": [],
-    "capture_unmapped_as_custom": true
-  }'
+  --mapping-json "$(cat work/HDP01234/vlmd_proposed_mapping.json)"
+```
+
+Reading `--mapping-json` from a file this way (rather than inlining it) avoids
+shell-quoting breakage — a single apostrophe in a column label (e.g.
+`"Participant's Age"`) would otherwise break an inline `'...'` JSON string. The
+mapping file itself looks like:
+
+```json
+{
+  "name_column": "VarName",
+  "description_column": "QuestionText",
+  "type_mapping": {
+    "source_column": "DataType",
+    "lookup": {"text": "string", "numeric": "number", "date": "date"}
+  },
+  "section": {"primary_column": "Category"},
+  "levels": {
+    "source_column": "Choices",
+    "format": "pipe_separated",
+    "pair_separator": ",",
+    "choice_separator": "|"
+  },
+  "minimum_column": null,
+  "maximum_column": null,
+  "value_labels_column": null,
+  "custom_columns": [],
+  "capture_unmapped_as_custom": true
+}
 ```
 
 This writes `formats/12345678.yaml`. Future files from this study are auto-detected.

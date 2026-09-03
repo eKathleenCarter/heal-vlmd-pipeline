@@ -51,6 +51,9 @@ def build_format_yaml(
             (mapping.get("type_mapping") or {}).get("source_column"),
             (mapping.get("levels") or {}).get("source_column"),
             (mapping.get("section") or {}).get("primary_column"),
+            mapping.get("minimum_column"),
+            mapping.get("maximum_column"),
+            mapping.get("value_labels_column"),
         ]
         if v
     ]
@@ -102,6 +105,13 @@ def build_format_yaml(
             "pair_separator": lev.get("pair_separator", ","),
             "choice_separator": lev.get("choice_separator", "|"),
         }
+
+    if mapping.get("minimum_column"):
+        doc["minimum_column"] = mapping["minimum_column"]
+    if mapping.get("maximum_column"):
+        doc["maximum_column"] = mapping["maximum_column"]
+    if mapping.get("value_labels_column"):
+        doc["value_labels_column"] = mapping["value_labels_column"]
 
     doc["related_concepts"] = mapping.get("related_concepts", [])
     doc["custom_columns"] = mapping.get("custom_columns", [])
