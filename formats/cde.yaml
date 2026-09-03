@@ -1,0 +1,75 @@
+format_name: cde
+description: HEAL Common Data Element (CDE) style data dictionary — "CDE Name" / "Variable Name" / "Permissible Values" / "PV Description" columns
+
+input_reader: csv
+
+name_column: "Variable Name"
+# Definition and Short Description are frequently identical or near-identical
+# per row (~68% exact matches observed) — get_val()'s combine handling drops
+# a part if it duplicates or is a truncation of one already kept, so this
+# doesn't produce repeated text when they overlap.
+description_column:
+  combine: ["Definition", "Short Description"]
+  separator: " | "
+title_column: "CDE Name"
+
+type_mapping:
+  source_column: "Data Type"
+  lookup:
+    AlphaNumeric:      string
+    Alphanumeric:      string
+    Numeric:           number
+    Numeric Value:     number
+    Numeric Values:    number
+    Numeric values:    number
+    text:              string
+    text number:       string
+    date:              date
+    "text (date)":     date
+
+enum_ordered:
+  source_column: "Data Type"
+  trigger_values: []
+
+section:
+  primary_column: "CRF Name"
+
+# PV Description holds "code = label; code = label" pairs (Permissible Values
+# alone only has the bare codes, redundant with this — captured as custom).
+levels:
+  source_column: "PV Description"
+  format: pipe_separated
+  pair_separator: "="
+  choice_separator: ";"
+
+related_concepts: []
+
+custom_columns:
+  - "CDE Name"
+  - "Question Text"
+  - "Permissible Values"
+  - "Disease Specific Instructions"
+  - "Disease Specific References"
+  - "Population"
+  - "Classification"
+  - "External ID CDISC"
+  - "Notes"
+
+excluded_columns:
+  - column: "Unnamed: 15"
+    reason: "empty trailing column, Excel export artifact"
+  - column: "Unnamed: 16"
+    reason: "empty trailing column, Excel export artifact"
+  - column: "Unnamed: 17"
+    reason: "empty trailing column, Excel export artifact"
+
+fixup_prompt: prompts/generic_fixup_prompt.md
+system_invariants_prompt: prompts/system_invariants_vlmd.md
+
+detection:
+  signature_columns:
+    strong:     ["CDE Name", "Variable Name", "Permissible Values", "PV Description"]
+    supporting: ["Definition", "Short Description", "Question Text", "Data Type",
+                 "Classification", "CRF Name", "External ID CDISC"]
+  confidence_threshold: 0.6
+  file_extensions: []
