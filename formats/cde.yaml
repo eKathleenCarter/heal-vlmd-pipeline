@@ -4,7 +4,13 @@ description: HEAL Common Data Element (CDE) style data dictionary — "CDE Name"
 input_reader: csv
 
 name_column: "Variable Name"
-description_column: "Question Text"
+# Definition and Short Description are frequently identical or near-identical
+# per row (~68% exact matches observed) — get_val()'s combine handling drops
+# a part if it duplicates or is a truncation of one already kept, so this
+# doesn't produce repeated text when they overlap.
+description_column:
+  combine: ["Definition", "Short Description"]
+  separator: " | "
 title_column: "CDE Name"
 
 type_mapping:
@@ -40,8 +46,7 @@ related_concepts: []
 
 custom_columns:
   - "CDE Name"
-  - "Definition"
-  - "Short Description"
+  - "Question Text"
   - "Permissible Values"
   - "Disease Specific Instructions"
   - "Disease Specific References"
@@ -49,6 +54,14 @@ custom_columns:
   - "Classification"
   - "External ID CDISC"
   - "Notes"
+
+excluded_columns:
+  - column: "Unnamed: 15"
+    reason: "empty trailing column, Excel export artifact"
+  - column: "Unnamed: 16"
+    reason: "empty trailing column, Excel export artifact"
+  - column: "Unnamed: 17"
+    reason: "empty trailing column, Excel export artifact"
 
 fixup_prompt: prompts/generic_fixup_prompt.md
 system_invariants_prompt: prompts/system_invariants_vlmd.md

@@ -8,6 +8,7 @@ identical output.
 """
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -71,6 +72,19 @@ def _parse_json_array(raw: str, value_key: str, label_key: str,
     return enum_values, enum_labels
 
 
+def _strip_wrapping_quotes(s: str) -> str:
+    """Strip one matching pair of leading/trailing straight quotes.
+
+    Some source exports wrap each key/value token in quotes, e.g.
+    `'baseline_arm_1'='Baseline'` — only strips when both ends match the
+    same quote character, so genuine apostrophes ("Associate's") are
+    left untouched.
+    """
+    if len(s) >= 2 and s[0] == s[-1] and s[0] in ("'", '"'):
+        return s[1:-1].strip()
+    return s
+
+
 def _parse_pipe_separated(raw: str, pair_sep: str,
                            choice_sep: str) -> tuple[list[str], dict[str, str]]:
     if not raw or raw.strip() in ("", "nan"):
@@ -80,12 +94,12 @@ def _parse_pipe_separated(raw: str, pair_sep: str,
     for choice in raw.split(choice_sep):
         parts = choice.split(pair_sep, 1)
         if len(parts) == 2:
-            val = parts[0].strip()
-            lbl = parts[1].strip()
+            val = _strip_wrapping_quotes(parts[0].strip())
+            lbl = _strip_wrapping_quotes(parts[1].strip())
             enum_values.append(val)
             enum_labels[val] = lbl
         elif len(parts) == 1 and parts[0].strip():
-            val = parts[0].strip()
+            val = _strip_wrapping_quotes(parts[0].strip())
             enum_values.append(val)
             enum_labels[val] = val
     return enum_values, enum_labels
@@ -164,12 +178,35 @@ def _clean_scalar(v: Any) -> str:
     return "" if s.lower() == "nan" else s
 
 
+def _normalize_for_dedup(s: str) -> str:
+    return re.sub(r"[\s.,;:]+$", "", s.strip().lower())
+
+
+def _dedupe_parts(parts: list[str]) -> list[str]:
+    """Drop a part if it duplicates, or is a truncation of, one already kept.
+
+    Source columns meant to be combined (e.g. "Definition" + "Short
+    Description") are frequently identical or near-identical per row —
+    combining them verbatim would produce a repeated/redundant description.
+    """
+    kept: list[str] = []
+    kept_norm: list[str] = []
+    for p in parts:
+        norm = _normalize_for_dedup(p)
+        if any(norm == k or norm in k or k in norm for k in kept_norm):
+            continue
+        kept.append(p)
+        kept_norm.append(norm)
+    return kept
+
+
 def get_val(row: dict, col: str | dict | None) -> str:
     if not col:
         return ""
     if isinstance(col, dict) and "combine" in col:
         parts = [_clean_scalar(row.get(c, "")) for c in col["combine"]]
-        return col.get("separator", " | ").join(p for p in parts if p)
+        parts = _dedupe_parts([p for p in parts if p])
+        return col.get("separator", " | ").join(parts)
     return _clean_scalar(row.get(col, ""))
 
 

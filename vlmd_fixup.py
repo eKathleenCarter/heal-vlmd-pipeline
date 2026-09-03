@@ -101,6 +101,39 @@ def process_chunk(system: str, base_prompt: str, chunk: list,
     return unwrapped
 
 
+def allowed_context_columns(format_yaml: str | None) -> set[str] | None:
+    """Source columns worth sending to the LLM as context, per the format spec.
+
+    Was previously a hardcoded REDCap/HBCD-specific allowlist ("Field Label",
+    "Form Name", ...) that silently matched nothing for any other format —
+    e.g. cde.yaml's fields all got an empty source_row, so fixup ran on
+    almost no context. Derive the allowlist from the format spec itself
+    instead: everything it explicitly maps, plus custom_columns.
+
+    Returns None (no restriction — send everything) if the spec can't be
+    loaded, so an unresolvable format_yaml fails open rather than silently
+    stripping all context again.
+    """
+    if not format_yaml or not Path(format_yaml).exists():
+        return None
+    spec = yaml.safe_load(Path(format_yaml).read_text(encoding="utf-8"))
+    cols: set[str] = set(spec.get("custom_columns") or [])
+    for key in ("name_column", "description_column", "title_column"):
+        v = spec.get(key)
+        if isinstance(v, str):
+            cols.add(v)
+        elif isinstance(v, dict) and "combine" in v:
+            cols.update(v["combine"])
+        elif isinstance(v, list):
+            cols.update(c for c in v if c)
+    for section, key in (("type_mapping", "source_column"), ("levels", "source_column"),
+                         ("section", "primary_column")):
+        v = (spec.get(section) or {}).get(key)
+        if v:
+            cols.add(v)
+    return cols
+
+
 def fixup(lint_path: str, output_path: str, checkpoint_path: str,
           format_yaml: str | None, model_key: str,
           cleanup_log_path: str | None = None) -> int:
@@ -110,14 +143,13 @@ def fixup(lint_path: str, output_path: str, checkpoint_path: str,
         Path(output_path).write_text("[]", encoding="utf-8")
         return 0
 
+    allowed_cols = allowed_context_columns(format_yaml)
     items_for_llm = [
         {
             "name": rec["name"],
             "issues": rec["issues"],
             "source_row": {k: v for k, v in (rec.get("source_row") or rec.get("hbcd_row", {})).items()
-                           if k in ["description", "instruction", "table_label", "domain",
-                                    "sub_domain", "source", "type_level", "type_data",
-                                    "Field Label", "Form Name", "Field Type", "Section Header"]},
+                           if allowed_cols is None or k in allowed_cols},
             "vlmd_field_draft": rec["vlmd_field_draft"],
         }
         for rec in lint_records
